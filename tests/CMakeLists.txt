@@ -2,6 +2,7 @@ add_executable(logloom_tests
   jsonl_extractor_test.cpp
   line_index_test.cpp
   line_reader_test.cpp
+  search_engine_test.cpp
   smoke_test.cpp
 )
 
