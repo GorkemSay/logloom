@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.2 — Safe Chunked pread Reader & Line Framer`
-- **Last Completed Step:** `Step 1.1 — Project Scaffold, CMake Presets & CI`
+- **Next Step:** `Step 1.3 — Zero-Copy Streaming JSONL Field Extractor`
+- **Last Completed Step:** `Step 1.2 — Safe Chunked pread Reader & Line Framer`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -16,7 +16,7 @@
 
 ### Phase 1 — C++20 Core Engine & CLI
 - [x] **Step 1.1** — Project Scaffold, CMake Presets & CI
-- [ ] **Step 1.2** — Safe Chunked `pread` Reader & Line Framer
+- [x] **Step 1.2** — Safe Chunked `pread` Reader & Line Framer
 - [ ] **Step 1.3** — Zero-Copy Streaming JSONL Field Extractor
 - [ ] **Step 1.4** — Byte-Offset Line Index & O(1) Context Seek
 - [ ] **Step 1.5** — Streaming Search & Trace Query Engine
@@ -59,6 +59,21 @@
   - `./build/release/cli/logloom --version` printed `logloom 0.1.0` (exit `0`); `--unknown` printed error to `stderr` (exit `2`).
 - **Next:** Execute **Step 1.2** (Safe Chunked `pread` Reader & Line Framer).
 - **Spec Drift / Follow-ups:** None. Public GitHub repository created and `main` pushed to `https://github.com/GorkemSay/logloom`.
+
+### 2026-11-25 — Step 1.2: Safe Chunked `pread` Reader & Line Framer
+- **Files Touched:** `include/logloom/posix_file.hpp`, `core/posix_file.cpp`, `include/logloom/line_reader.hpp`, `core/line_reader.cpp`, `core/CMakeLists.txt`, `tests/line_reader_test.cpp`, `tests/CMakeLists.txt`, `PROGRESS.md`.
+- **Summary:**
+  - Implemented `logloom::PosixFile` as a move-only RAII wrapper opening files strictly read-only (`O_RDONLY | O_CLOEXEC`), rejecting directories (`EISDIR`), and providing `EINTR`-safe `pread_some`/`pread_full`.
+  - Implemented `logloom::ChunkedLineReader` with exact `(line_number, byte_offset, byte_length)` tracking, zero-copy fast path within chunks, cross-chunk accumulation, UTF-8 BOM detection/stripping, `\n`/`\r\n` handling, truncated EOF reporting, and bounded-memory `max_line_bytes` enforcement (16 MiB default).
+  - Added Catch2 unit, chunk-boundary matrix, BOM, cap-enforcement, and hostile-input tests (`line_reader_test.cpp`).
+- **Key Decisions / Trade-offs:**
+  - Bounded `line_buf_` to `max_line_bytes + 1` lazily (without upfront cap-sized allocation) so a CRLF line of exact length `max_line_bytes` can retain its trailing `\r` until `\n` confirms stripping, while larger lines drop the buffer immediately and count bytes in O(1) memory.
+  - Peeked UTF-8 BOM at offset `0` via `pread_full` during initialization so BOM detection is independent of `chunk_size`.
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `8/8` tests (`0.12 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `8/8` tests (`0.03 sec`).
+- **Next:** Execute **Step 1.3** (Zero-Copy Streaming JSONL Field Extractor).
+- **Spec Drift / Follow-ups:** None.
 
 <!--
 Entry template for subsequent steps:

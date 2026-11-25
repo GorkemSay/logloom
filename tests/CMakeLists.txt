@@ -1,4 +1,5 @@
 add_executable(logloom_tests
+  line_reader_test.cpp
   smoke_test.cpp
 )
 

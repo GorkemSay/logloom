@@ -1,4 +1,6 @@
 add_library(logloom_core STATIC
+  line_reader.cpp
+  posix_file.cpp
   version.cpp
 )
 add_library(logloom::core ALIAS logloom_core)
