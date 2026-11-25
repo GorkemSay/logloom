@@ -1,0 +1,38 @@
+# Build artifacts
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+.cache/
+
+# Binaries & libraries
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+*.dSYM/
+
+# Generated benchmark & large test log data (never commit!)
+bench_data/
+*.jsonl
+*.ndjson
+*.log
+!tests/fixtures/*.jsonl
+!tests/fixtures/*.log
+
+# macOS & Xcode
+.DS_Store
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
