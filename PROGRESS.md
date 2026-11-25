@@ -8,7 +8,7 @@
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
 - **Next Step:** `Step 1.2 — Safe Chunked pread Reader & Line Framer`
 - **Last Completed Step:** `Step 1.1 — Project Scaffold, CMake Presets & CI`
-- **GitHub Remote:** *(Pending — GitHub API returned HTTP 500 during `partial_outage`; local commits ready to push)*
+- **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
 
@@ -58,7 +58,7 @@
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `1/1` test (`0.01 sec`).
   - `./build/release/cli/logloom --version` printed `logloom 0.1.0` (exit `0`); `--unknown` printed error to `stderr` (exit `2`).
 - **Next:** Execute **Step 1.2** (Safe Chunked `pread` Reader & Line Framer).
-- **Spec Drift / Follow-ups:** GitHub remote creation via `gh` returned HTTP 500 during an active GitHub `Git Operations` partial outage; Step 1.1 is committed locally and ready to push once GitHub recovers.
+- **Spec Drift / Follow-ups:** None. Public GitHub repository created and `main` pushed to `https://github.com/GorkemSay/logloom`.
 
 <!--
 Entry template for subsequent steps:
