@@ -11,7 +11,8 @@ namespace logloom {
 ChunkedLineReader::ChunkedLineReader(const PosixFile& file, LineReaderOptions options)
     : file_(&file),
       options_(options),
-      chunk_buf_(std::max<std::size_t>(options.chunk_size, 1)) {}
+      chunk_buf_(std::max<std::size_t>(options.chunk_size, 1)),
+      file_offset_(options.start_offset) {}
 
 const ReadStats& ChunkedLineReader::stats() const noexcept {
   return stats_;
@@ -28,7 +29,7 @@ bool ChunkedLineReader::next_line(LineView& out, std::error_code& ec) {
 
   if (!initialized_) {
     initialized_ = true;
-    if (options_.strip_utf8_bom) {
+    if (options_.strip_utf8_bom && options_.start_offset == 0) {
       std::array<char, 3> bom{};
       const std::size_t n = file_->pread_full(0, bom, ec);
       if (ec) {

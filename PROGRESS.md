@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.4 — Byte-Offset Line Index & O(1) Context Seek`
-- **Last Completed Step:** `Step 1.3 — Zero-Copy Streaming JSONL Field Extractor`
+- **Next Step:** `Step 1.5 — Streaming Search & Trace Query Engine`
+- **Last Completed Step:** `Step 1.4 — Byte-Offset Line Index & O(1) Context Seek`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -18,7 +18,7 @@
 - [x] **Step 1.1** — Project Scaffold, CMake Presets & CI
 - [x] **Step 1.2** — Safe Chunked `pread` Reader & Line Framer
 - [x] **Step 1.3** — Zero-Copy Streaming JSONL Field Extractor
-- [ ] **Step 1.4** — Byte-Offset Line Index & O(1) Context Seek
+- [x] **Step 1.4** — Byte-Offset Line Index & O(1) Context Seek
 - [ ] **Step 1.5** — Streaming Search & Trace Query Engine
 - [ ] **Step 1.6** — Multithreaded Chunked Search Engine
 - [ ] **Step 1.7** — `logloom` CLI Tool & Trace Export
@@ -88,6 +88,20 @@
   - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `15/15` tests (`0.27 sec`).
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `15/15` tests (`0.03 sec`).
 - **Next:** Execute **Step 1.4** (Byte-Offset Line Index & O(1) Context Seek).
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-25 — Step 1.4: Byte-Offset Line Index & O(1) Context Seek
+- **Files Touched:** `include/logloom/line_reader.hpp`, `core/line_reader.cpp`, `include/logloom/line_index.hpp`, `core/line_index.cpp`, `core/CMakeLists.txt`, `tests/line_index_test.cpp`, `tests/CMakeLists.txt`, `PROGRESS.md`.
+- **Summary:**
+  - Extended `LineReaderOptions` with `start_offset` so `ChunkedLineReader` can resume directly from any indexed byte offset (skipping BOM detection when `start_offset > 0`).
+  - Implemented `logloom::LineIndex` with single-pass indexing, O(1) checkpoint seek `read_line`, and single-seek window `read_context`.
+  - Added Catch2 tests covering empty/BOM-only files, dense random-access parity, adaptive strided compaction across tiny memory budgets, and `read_context` clamping/oversized-line handling (`line_index_test.cpp`).
+- **Key Decisions / Trade-offs:**
+  - Chose a default `16 MiB` (`max_memory_bytes`) adaptive strided checkpoint budget: dense (`stride == 1`) up to `2,097,152` lines (`8` bytes per `uint64_t` offset), then compacting in-place and doubling `stride` whenever the budget is reached so multi-GB files stay strictly within bounded memory while keeping random seeks fast.
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `19/19` tests (`0.33 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `19/19` tests (`0.05 sec`).
+- **Next:** Execute **Step 1.5** (Streaming Search & Trace Query Engine).
 - **Spec Drift / Follow-ups:** None.
 
 <!--

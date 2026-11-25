@@ -15,6 +15,7 @@ struct LineReaderOptions {
   std::size_t chunk_size = 256 * 1024;
   std::size_t max_line_bytes = 16 * 1024 * 1024;
   bool strip_utf8_bom = true;
+  std::uint64_t start_offset = 0;
 };
 
 struct LineView {
