@@ -6,16 +6,16 @@
 ## Current Status
 
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.1 — Project Scaffold, CMake Presets & CI`
-- **Last Completed Step:** `Step 0 — Specification & Workspace Setup`
-- **GitHub Remote:** *(Not yet linked — set remote before first push)*
+- **Next Step:** `Step 1.2 — Safe Chunked pread Reader & Line Framer`
+- **Last Completed Step:** `Step 1.1 — Project Scaffold, CMake Presets & CI`
+- **GitHub Remote:** *(Pending — GitHub API returned HTTP 500 during `partial_outage`; local commits ready to push)*
 
 ---
 
 ## Step Checklist
 
 ### Phase 1 — C++20 Core Engine & CLI
-- [ ] **Step 1.1** — Project Scaffold, CMake Presets & CI
+- [x] **Step 1.1** — Project Scaffold, CMake Presets & CI
 - [ ] **Step 1.2** — Safe Chunked `pread` Reader & Line Framer
 - [ ] **Step 1.3** — Zero-Copy Streaming JSONL Field Extractor
 - [ ] **Step 1.4** — Byte-Offset Line Index & O(1) Context Seek
@@ -44,6 +44,21 @@
   - Catch2 v3 selected for unit, edge-case, and differential testing under ASan/UBSan.
 - **Verification:** Documentation & ignore rules created; no code targets yet.
 - **Next:** Execute **Step 1.1** (CMake scaffold, presets, Catch2, smoke test, `README.md`, GitHub Actions CI).
+
+### 2026-11-25 — Step 1.1: Project Scaffold, CMake Presets & CI
+- **Files Touched:** `CMakeLists.txt`, `CMakePresets.json`, `include/logloom/version.hpp`, `core/version.cpp`, `core/CMakeLists.txt`, `cli/main.cpp`, `cli/CMakeLists.txt`, `tests/smoke_test.cpp`, `tests/CMakeLists.txt`, `README.md`, `.github/workflows/ci.yml`, `PROGRESS.md`.
+- **Summary:**
+  - Set up C++20 CMake project (`logloom` 0.1.0) with `debug-asan` and `release` presets (Ninja generator), Catch2 `v3.7.1` via `FetchContent`, and strict `-Wall -Wextra -Wpedantic -Werror` warnings isolated to first-party targets via `logloom_warnings`.
+  - Created `liblogloom` static library (`logloom::core`), `logloom` CLI (`--version`/`-V`, `--help`/`-h`, exit code `2` on unknown options), Catch2 smoke test, `README.md`, and macOS + Ubuntu GitHub Actions CI workflow.
+- **Key Decisions / Trade-offs:**
+  - Isolated compiler warning flags on an `INTERFACE` target (`logloom_warnings`) instead of global `add_compile_options` so third-party Catch2 headers/sources compile cleanly under `-Werror`.
+  - Used `CMakePresets.json` schema version `4` for CMake >= 3.24 compatibility across local macOS and CI runners.
+- **Verification:**
+  - `debug-asan` (AppleClang 21.0.0 + ASan/UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `1/1` test (`0.02 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `1/1` test (`0.01 sec`).
+  - `./build/release/cli/logloom --version` printed `logloom 0.1.0` (exit `0`); `--unknown` printed error to `stderr` (exit `2`).
+- **Next:** Execute **Step 1.2** (Safe Chunked `pread` Reader & Line Framer).
+- **Spec Drift / Follow-ups:** GitHub remote creation via `gh` returned HTTP 500 during an active GitHub `Git Operations` partial outage; Step 1.1 is committed locally and ready to push once GitHub recovers.
 
 <!--
 Entry template for subsequent steps:
