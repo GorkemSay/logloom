@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.3 — Zero-Copy Streaming JSONL Field Extractor`
-- **Last Completed Step:** `Step 1.2 — Safe Chunked pread Reader & Line Framer`
+- **Next Step:** `Step 1.4 — Byte-Offset Line Index & O(1) Context Seek`
+- **Last Completed Step:** `Step 1.3 — Zero-Copy Streaming JSONL Field Extractor`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -17,7 +17,7 @@
 ### Phase 1 — C++20 Core Engine & CLI
 - [x] **Step 1.1** — Project Scaffold, CMake Presets & CI
 - [x] **Step 1.2** — Safe Chunked `pread` Reader & Line Framer
-- [ ] **Step 1.3** — Zero-Copy Streaming JSONL Field Extractor
+- [x] **Step 1.3** — Zero-Copy Streaming JSONL Field Extractor
 - [ ] **Step 1.4** — Byte-Offset Line Index & O(1) Context Seek
 - [ ] **Step 1.5** — Streaming Search & Trace Query Engine
 - [ ] **Step 1.6** — Multithreaded Chunked Search Engine
@@ -73,6 +73,21 @@
   - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `8/8` tests (`0.12 sec`).
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `8/8` tests (`0.03 sec`).
 - **Next:** Execute **Step 1.3** (Zero-Copy Streaming JSONL Field Extractor).
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-25 — Step 1.3: Zero-Copy Streaming JSONL Field Extractor
+- **Files Touched:** `include/logloom/jsonl_extractor.hpp`, `core/jsonl_extractor.cpp`, `core/CMakeLists.txt`, `tests/jsonl_extractor_test.cpp`, `tests/CMakeLists.txt`, `PROGRESS.md`.
+- **Summary:**
+  - Implemented `logloom::extract_jsonl_fields` as a zero-allocation, non-recursive streaming scanner over `std::string_view` classifying lines into `JsonObject`, `PlainText`, or `Malformed` and extracting top-level `timestamp`, `level`, and configurable `trace_key` (`request_id`) slices.
+  - Added iterative fixed-depth (`512`) nested container skipping so nested objects/arrays cannot trigger stack overflow or falsely match nested keys, alongside RFC 8259 string escape, number, and literal validation.
+  - Added Catch2 unit, escape, nesting, plain-text, invalid-UTF-8, and adversarial malformed-input tests (`jsonl_extractor_test.cpp`).
+- **Key Decisions / Trade-offs:**
+  - Replaced recursion with an explicit fixed-size `std::array<ContainerFrame, 512>` state stack in `skip_nested_container` so hostile deeply nested inputs fail deterministically as `Malformed` with O(1) stack and zero heap allocations.
+  - Cleared all extracted fields whenever a JSON object fails validation before EOF so callers only consume fields when `kind == LineKind::JsonObject`.
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `15/15` tests (`0.27 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `15/15` tests (`0.03 sec`).
+- **Next:** Execute **Step 1.4** (Byte-Offset Line Index & O(1) Context Seek).
 - **Spec Drift / Follow-ups:** None.
 
 <!--
