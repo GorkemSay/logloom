@@ -52,6 +52,11 @@ struct SearchStats {
 
 using MatchCallback = std::function<bool(const SearchMatch&)>;
 
+struct ParallelSearchOptions {
+  std::size_t num_threads = 0; // 0 = auto (hardware_concurrency)
+  std::size_t partition_bytes = 4 * 1024 * 1024;
+};
+
 /// Streams `file` line-by-line, evaluates active query filters (AND semantics),
 /// and invokes `on_match` immediately as matches are found.
 [[nodiscard]] SearchStats search_file(
@@ -59,6 +64,16 @@ using MatchCallback = std::function<bool(const SearchMatch&)>;
     const SearchQuery& query,
     const MatchCallback& on_match,
     std::error_code& ec,
+    const std::atomic<bool>* cancel_flag = nullptr);
+
+/// Partitions `file` on exact newline boundaries across a bounded worker pool
+/// and streams matches in deterministic file order.
+[[nodiscard]] SearchStats search_file_parallel(
+    const PosixFile& file,
+    const SearchQuery& query,
+    const MatchCallback& on_match,
+    std::error_code& ec,
+    ParallelSearchOptions parallel_options = {},
     const std::atomic<bool>* cancel_flag = nullptr);
 
 } // namespace logloom

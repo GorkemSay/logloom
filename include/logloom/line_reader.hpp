@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -16,6 +17,7 @@ struct LineReaderOptions {
   std::size_t max_line_bytes = 16 * 1024 * 1024;
   bool strip_utf8_bom = true;
   std::uint64_t start_offset = 0;
+  std::optional<std::uint64_t> end_offset{};
 };
 
 struct LineView {

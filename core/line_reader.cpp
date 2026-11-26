@@ -87,7 +87,19 @@ bool ChunkedLineReader::next_line(LineView& out, std::error_code& ec) {
         return true;
       }
 
-      const std::size_t n = file_->pread_full(file_offset_, chunk_buf_, ec);
+      std::span<char> read_span(chunk_buf_);
+      if (options_.end_offset.has_value()) {
+        if (file_offset_ >= *options_.end_offset) {
+          eof_ = true;
+          continue;
+        }
+        const std::uint64_t remaining = *options_.end_offset - file_offset_;
+        const std::size_t max_to_read = static_cast<std::size_t>(
+            std::min<std::uint64_t>(chunk_buf_.size(), remaining));
+        read_span = std::span<char>(chunk_buf_.data(), max_to_read);
+      }
+
+      const std::size_t n = file_->pread_full(file_offset_, read_span, ec);
       if (ec) {
         return false;
       }

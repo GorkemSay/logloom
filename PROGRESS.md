@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.6 — Multithreaded Chunked Search Engine`
-- **Last Completed Step:** `Step 1.5 — Streaming Search & Trace Query Engine`
+- **Next Step:** `Step 1.7 — logloom CLI Tool & Trace Export`
+- **Last Completed Step:** `Step 1.6 — Multithreaded Chunked Search Engine`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -20,7 +20,7 @@
 - [x] **Step 1.3** — Zero-Copy Streaming JSONL Field Extractor
 - [x] **Step 1.4** — Byte-Offset Line Index & O(1) Context Seek
 - [x] **Step 1.5** — Streaming Search & Trace Query Engine
-- [ ] **Step 1.6** — Multithreaded Chunked Search Engine
+- [x] **Step 1.6** — Multithreaded Chunked Search Engine
 - [ ] **Step 1.7** — `logloom` CLI Tool & Trace Export
 - [ ] **Step 1.8** — Deterministic Log Generator & `pread` vs `mmap` Benchmarks
 - [ ] **Step 1.9** — Stable C ABI (`c_api.h`) & Phase 1 Release (`v0.1.0`)
@@ -117,6 +117,21 @@
   - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `22/22` tests (`0.41 sec`).
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `22/22` tests (`0.21 sec`).
 - **Next:** Execute **Step 1.6** (Multithreaded Chunked Search Engine).
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-26 — Step 1.6: Multithreaded Chunked Search Engine
+- **Files Touched:** `include/logloom/line_reader.hpp`, `core/line_reader.cpp`, `include/logloom/search_engine.hpp`, `core/search_engine.cpp`, `tests/parallel_search_test.cpp`, `tests/CMakeLists.txt`, `PROGRESS.md`.
+- **Summary:**
+  - Added exclusive `end_offset` support to `LineReaderOptions` / `ChunkedLineReader` so partitions can stream bounded byte ranges cleanly.
+  - Implemented `logloom::search_file_parallel` with exact newline-boundary partitioning (`partition_file_on_newlines`), a bounded `std::thread` worker pool (`ThreadPoolGuard`), sliding-window in-flight capping (`2 * worker_count`), deterministic file-order batch emission, `limit` early stopping, and cooperative cancellation.
+  - Added differential and concurrency Catch2 tests (`parallel_search_test.cpp`) verifying byte-for-byte parity between single-threaded `search_file` and `search_file_parallel` across `{1, 2, 4, 8}` threads, varied partition/chunk sizes, mixed hostile inputs, `limit`, and cancellation.
+- **Key Decisions / Trade-offs:**
+  - Bounded in-flight partitions with a sliding window (`next_to_claim - next_to_emit < max_in_flight`) and re-extracted `ExtractedFields` on the coordinator right before `on_match` so `std::string_view` slices remain valid while memory stays bounded on large files.
+  - Used portable `std::thread` with RAII join guard and per-worker `std::regex` instances to avoid cross-platform `std::jthread` gaps and concurrent regex state sharing.
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `25/25` tests (`2.19 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `25/25` tests (`0.56 sec`).
+- **Next:** Execute **Step 1.7** (`logloom` CLI Tool & Trace Export).
 - **Spec Drift / Follow-ups:** None.
 
 <!--
