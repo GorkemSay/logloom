@@ -41,7 +41,7 @@ logloom/
 
 **Tech Stack:**
 - **Phase 1 (Core + CLI):** C++20, CMake (≥3.24), Catch2 v3 (via `FetchContent`), POSIX I/O (`pread`, optional isolated `mmap` backend for comparison). No heavy third-party JSON DOM libraries in the hot path.
-- **Phase 2 (macOS App):** Swift, AppKit (`NSTableView` for virtualized scrolling), SwiftUI (window chrome, toolbar, inspector), linking `liblogloom` via `c_api.h`.
+- **Phase 2 (macOS App):** Swift Package Manager (`Package.swift`, no `.xcodeproj` required), AppKit (`NSTableView` for virtualized scrolling), SwiftUI (window chrome, toolbar, inspector), linking `liblogloom` via `c_api.h` + a `.app` bundle & signing script.
 
 ---
 
@@ -176,8 +176,8 @@ logloom/
 
 *(Detailed UI sub-specs may be refined right before Step 2.1 based on Phase 1 learnings.)*
 
-- **Step 2.1 — macOS App Skeleton & `liblogloom` C-ABI Bridge:** Sandboxed Xcode project linking `liblogloom`, Swift wrapper types, drag-and-drop & Open Panel read-only file loading.
+- **Step 2.1 — macOS App Skeleton & `liblogloom` C-ABI Bridge:** SwiftPM (`Package.swift`) executable linking `liblogloom` via `c_api.h` + `.app` bundle/entitlements script (`Logloom.app`, App Sandbox), Swift wrapper types, drag-and-drop & Open Panel read-only file loading.
 - **Step 2.2 — Virtualized Log Viewport (`NSTableView`):** Instant first-screen render + background indexing progress + smooth virtual scrolling + truncated-EOF banner.
 - **Step 2.3 — Interactive Trace Isolation & Live Search:** Click any `request_id` to view its chronological timeline; non-blocking search with cancel-on-type.
 - **Step 2.4 — Line Inspector, Keyboard Navigation & Export:** Split detail pane for formatted JSON inspection, ±N context jump, keyboard shortcuts, and filtered `.jsonl` export.
-- **Step 2.5 — Instruments Profiling, Polish & `v1.0.0`:** Profile CPU, peak RSS, and scroll hitches in Xcode Instruments; refine visuals; record concise demo GIF and update `README.md`.
+- **Step 2.5 — Profiling, Polish & `v1.0.0`:** Profile CPU, peak RSS, and scroll hitches via `xcrun xctrace` / Instruments; refine visuals; record concise demo GIF and update `README.md`.
