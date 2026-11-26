@@ -82,18 +82,30 @@ struct ContentView: View {
 
                 Spacer()
 
-                Text("Preview: \(model.headLines.count) line(s)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if model.isIndexing {
+                    Text("Indexing \(Int((model.indexProgress * 100).rounded()))% (\(model.indexedLinesSoFar) lines)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(model.rowCount) line(s)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(.bar)
 
-            Divider()
+            if model.isIndexing {
+                ProgressView(value: model.indexProgress)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+            } else {
+                Divider()
+            }
 
             if let errorMessage = model.errorMessage {
-                HStack {
+                HStack(spacing: 8) {
                     Text(errorMessage)
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -104,48 +116,59 @@ struct ContentView: View {
                 Divider()
             }
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(model.headLines) { line in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text("\(line.lineNumber)")
-                                .font(.system(.caption, design: .monospaced).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(minWidth: 48, alignment: .trailing)
-
-                            if let level = line.fields.level {
-                                Text(level)
-                                    .font(.system(.caption2, design: .monospaced).weight(.medium))
-                                    .foregroundStyle(levelColor(level))
-                                    .frame(minWidth: 46, alignment: .leading)
-                            }
-
-                            Text(line.exceedsMaxLength
-                                ? "[oversized line: \(line.byteLength) bytes skipped]"
-                                : line.content)
-                                .font(.system(.callout, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 2)
+            if model.hasTruncatedFinalLine && !model.truncatedBannerDismissed {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("Final line has no trailing newline (truncated EOF).")
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Button("Dismiss") {
+                        model.truncatedBannerDismissed = true
                     }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
                 }
+                .padding(.horizontal, 14)
                 .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.10))
+                Divider()
             }
-        }
-    }
 
-    private func levelColor(_ level: String) -> Color {
-        switch level.uppercased() {
-        case "ERROR", "FATAL":
-            return .red
-        case "WARN", "WARNING":
-            return .orange
-        case "DEBUG":
-            return .secondary
-        default:
-            return .primary
+            VirtualizedLogTableView(
+                lineCache: model.lineCache,
+                viewportRevision: model.viewportRevision,
+                selectedLineNumber: $model.selectedLineNumber
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                if model.isIndexed {
+                    Text("\(model.rowCount) lines")
+                } else {
+                    Text("Preview: \(model.rowCount) lines (indexing in background)")
+                }
+
+                if model.oversizedLineCount > 0 {
+                    Text("\(model.oversizedLineCount) oversized line(s) skipped")
+                        .foregroundStyle(.orange)
+                }
+
+                Spacer()
+
+                if let selectedLine = model.selectedLineNumber {
+                    Text("Selected line \(selectedLine)")
+                }
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 5)
+            .background(.bar)
         }
     }
 

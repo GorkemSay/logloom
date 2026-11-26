@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 2 — Native macOS Desktop App
-- **Next Step:** `Step 2.2 — Virtualized Log Viewport (NSTableView)`
-- **Last Completed Step:** `Step 2.1 — macOS App Skeleton & liblogloom C-ABI Bridge`
+- **Next Step:** `Step 2.3 — Interactive Trace Isolation & Live Search`
+- **Last Completed Step:** `Step 2.2 — Virtualized Log Viewport (NSTableView)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -27,7 +27,7 @@
 
 ### Phase 2 — Native macOS Desktop App
 - [x] **Step 2.1** — macOS App Skeleton & `liblogloom` C-ABI Bridge
-- [ ] **Step 2.2** — Virtualized Log Viewport (`NSTableView`)
+- [x] **Step 2.2** — Virtualized Log Viewport (`NSTableView`)
 - [ ] **Step 2.3** — Interactive Trace Isolation & Live Search
 - [ ] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
 - [ ] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
@@ -204,6 +204,22 @@
   - `swift test --package-path macos` (`3/3` `LogloomCoreTests`) passed with 0 warnings.
   - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` (`codesign --verify` passed, App Sandbox entitlements verified).
 - **Next:** Execute **Step 2.2** (Virtualized Log Viewport via `NSTableView`).
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-26 — Step 2.2: Virtualized Log Viewport (NSTableView)
+- **Files Touched:** `macos/Sources/LogloomCore/LinePageCache.swift`, `macos/Sources/LogloomApp/AppModel.swift`, `macos/Sources/LogloomApp/VirtualizedLogTableView.swift`, `macos/Sources/LogloomApp/ContentView.swift`, `macos/Tests/LogloomCoreTests/LogloomCoreTests.swift`, `PROGRESS.md`.
+- **Summary:**
+  - Implemented `LinePageCache` (256-line pages, 32-page bounded LRU eviction) serving instant pre-index `readHead(maxLines: 500)` rows immediately and lazily faulting random-access pages via `LogFile.readContext` once indexing finishes.
+  - Updated `AppModel` with `CancelToken` lifecycle management, `openGeneration` guards against stale completions, throttled (~50 ms) background indexing progress updates, truncated-EOF & oversized-line metadata, and selection tracking.
+  - Built `VirtualizedLogTableView` wrapping AppKit `NSScrollView` + `NSTableView` (fixed 20 px rows, 5 tabular monospaced columns `#`, `Timestamp`, `Level`, `Trace ID`, `Content`, reusable `NSTableCellView` + `NSTextField` cells, scroll/selection preservation across index completion).
+  - Updated `ContentView` with a native linear indexing progress indicator, dismissible truncated-EOF banner, and bottom status bar.
+- **Key Decisions / Trade-offs:**
+  - Faulted full 256-line pages in one `LogFile.readContext` C-ABI call per cache miss rather than 256 per-row `readLine` calls, avoiding repeated seek/parse overhead while bounding resident UI line memory to ~8,192 lines.
+- **Verification:**
+  - `debug-asan` (`32/32` C/C++ tests) & `release` (`32/32` C/C++ tests) passed with 0 warnings.
+  - `swift test --package-path macos` (`4/4` `LogloomCoreTests`, including `testLinePageCachePreIndexAndBoundedLRUEviction`) passed with 0 warnings.
+  - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` cleanly.
+- **Next:** Execute **Step 2.3** (Interactive Trace Isolation & Live Search).
 - **Spec Drift / Follow-ups:** None.
 
 <!--

@@ -107,4 +107,41 @@ final class LogloomCoreTests: XCTestCase {
             }
         }
     }
+
+    func testLinePageCachePreIndexAndBoundedLRUEviction() throws {
+        var rows: [String] = []
+        rows.reserveCapacity(120)
+        for i in 1...120 {
+            rows.append("{\"timestamp\":\"2026-01-01T00:00:\(String(format: "%02d", i % 60))Z\",\"level\":\"INFO\",\"request_id\":\"tr-\(i)\",\"msg\":\"line \(i)\"}")
+        }
+        let url = try makeFixture(rows.joined(separator: "\n") + "\n")
+
+        let file = try LogFile(path: url.path)
+        let head = try file.readHead(maxLines: 15)
+
+        let cache = LinePageCache(pageSize: 10, maxCachedPages: 3)
+        cache.configure(file: file, headLines: head)
+
+        XCTAssertFalse(file.isIndexed)
+        XCTAssertEqual(cache.rowCount, 15)
+        XCTAssertEqual(cache.line(atRow: 0)?.lineNumber, 1)
+        XCTAssertEqual(cache.line(atRow: 14)?.lineNumber, 15)
+        XCTAssertNil(cache.line(atRow: 15))
+        XCTAssertEqual(cache.cachedPageCount, 0)
+
+        let stats = try file.buildIndex()
+        XCTAssertEqual(stats.totalLines, 120)
+        cache.clearCache()
+
+        XCTAssertEqual(cache.rowCount, 120)
+        XCTAssertEqual(cache.line(atRow: 0)?.fields.traceID, "tr-1")
+        XCTAssertEqual(cache.line(atRow: 15)?.lineNumber, 16)
+        XCTAssertEqual(cache.line(atRow: 35)?.lineNumber, 36)
+        XCTAssertEqual(cache.cachedPageCount, 3)
+
+        // Touch page 0 so page 1 becomes least recently used, then load page 11.
+        XCTAssertEqual(cache.line(atRow: 2)?.lineNumber, 3)
+        XCTAssertEqual(cache.line(atRow: 119)?.lineNumber, 120)
+        XCTAssertEqual(cache.cachedPageCount, 3)
+    }
 }
