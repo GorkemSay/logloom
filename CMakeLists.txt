@@ -19,6 +19,7 @@ target_compile_options(logloom_warnings INTERFACE -Wall -Wextra -Wpedantic -Werr
 
 add_subdirectory(core)
 add_subdirectory(cli)
+add_subdirectory(tools)
 
 if(LOGLOOM_BUILD_TESTS)
   enable_testing()

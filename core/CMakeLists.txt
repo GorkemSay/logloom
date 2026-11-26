@@ -2,6 +2,7 @@ add_library(logloom_core STATIC
   jsonl_extractor.cpp
   line_index.cpp
   line_reader.cpp
+  mmap_reader.cpp
   posix_file.cpp
   search_engine.cpp
   version.cpp

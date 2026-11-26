@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.8 — Deterministic Log Generator & pread vs mmap Benchmarks`
-- **Last Completed Step:** `Step 1.7 — logloom CLI Tool & Trace Export`
+- **Next Step:** `Step 1.9 — Stable C ABI (c_api.h) & Phase 1 Release (v0.1.0)`
+- **Last Completed Step:** `Step 1.8 — Deterministic Log Generator & pread vs mmap Benchmarks`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -22,7 +22,7 @@
 - [x] **Step 1.5** — Streaming Search & Trace Query Engine
 - [x] **Step 1.6** — Multithreaded Chunked Search Engine
 - [x] **Step 1.7** — `logloom` CLI Tool & Trace Export
-- [ ] **Step 1.8** — Deterministic Log Generator & `pread` vs `mmap` Benchmarks
+- [x] **Step 1.8** — Deterministic Log Generator & `pread` vs `mmap` Benchmarks
 - [ ] **Step 1.9** — Stable C ABI (`c_api.h`) & Phase 1 Release (`v0.1.0`)
 
 ### Phase 2 — Native macOS Desktop App
@@ -148,6 +148,21 @@
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `28/28` tests (`0.89 sec`).
 - **Next:** Execute **Step 1.8** (Deterministic Log Generator & `pread` vs `mmap` Benchmarks).
 - **Spec Drift / Follow-ups:** None.
+
+### 2026-11-26 — Step 1.8: Deterministic Log Generator & `pread` vs `mmap` Benchmarks
+- **Files Touched:** `include/logloom/mmap_reader.hpp`, `core/mmap_reader.cpp`, `core/search_match_internal.hpp`, `core/search_engine.cpp`, `core/CMakeLists.txt`, `tests/mmap_reader_test.cpp`, `tests/CMakeLists.txt`, `CMakeLists.txt`, `tools/CMakeLists.txt`, `tools/logloom_gen.cpp`, `tools/logloom_bench.cpp`, `tools/run_benchmarks.sh`, `BENCHMARKS.md`, `README.md`, `PROGRESS.md`.
+- **Summary:**
+  - Added isolated `MmapFile` / `search_file_mmap` comparison backend (`SIGBUS` risk documented; `pread` kept as safe default) and shared matching/pool helpers in `core/search_match_internal.hpp`.
+  - Built deterministic seeded generator `tools/logloom-gen`, subprocess benchmark runner `tools/logloom-bench`, and `tools/run_benchmarks.sh`.
+  - Measured 100 MiB, 1 GiB, and 5 GiB datasets on Apple M4 (16 GiB RAM, macOS 27.2.1) and documented results in `BENCHMARKS.md` and `README.md`.
+- **Key Decisions / Trade-offs:**
+  - Verified empirically that `pread-parallel` beats `mmap-parallel` by ~3x at 5 GiB (`1.86–1.94 s` / `2,636–2,758 MiB/s` vs `5.61–6.15 s` / `832–913 MiB/s`) while keeping Peak RSS bounded to `5.61–6.95 MiB` vs `3,895–3,914 MiB` for `mmap-parallel`.
+  - Measured `jq -R -c 'fromjson? | ...'` as baseline (`12.45 s` on 1 GiB) since `rg` was not installed on this host.
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `31/31` tests (`3.46 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `31/31` tests (`0.85 sec`).
+- **Next:** Execute **Step 1.9** (Stable C ABI `c_api.h` & Phase 1 Release `v0.1.0`).
+- **Spec Drift / Follow-ups:** None. Metric 4 (UI scroll hitch rate) is deferred to Phase 2 / Step 2.5 per `SPEC.md`.
 
 <!--
 Entry template for subsequent steps:

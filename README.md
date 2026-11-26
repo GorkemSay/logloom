@@ -65,7 +65,21 @@ ctest --preset release --output-on-failure
 - `1`: No matches found (or requested line out of range)
 - `2`: Usage, regex, or I/O error
 
+## Verified Benchmarks
+
+Measured on **Apple M4** (10 cores, 16 GiB RAM, macOS 27.2.1, `release` preset) using deterministic seeded JSONL datasets from `tools/logloom-gen`. Full methodology, 100 MiB / 1 GiB / 5 GiB tables, and `pread` vs. `mmap` analysis are in [BENCHMARKS.md](./BENCHMARKS.md).
+
+| Dataset | Mode | Duration | Throughput | Peak RSS |
+| --- | --- | ---: | ---: | ---: |
+| 1 GiB (`5.50M` lines) | `pread-parallel` | `141–151 ms` | `6,779–7,262 MiB/s` | `5.94–6.44 MiB` |
+| 1 GiB (`5.50M` lines) | `mmap-parallel` | `136 ms` | `7,510–7,525 MiB/s` | `1,026 MiB` |
+| 1 GiB (`5.50M` lines) | `jq -R fromjson?` | `12,450 ms` | `82.25 MiB/s` | `2.36 MiB` |
+| 5 GiB (`27.51M` lines) | `pread-parallel` | `1,856–1,942 ms` | `2,636–2,758 MiB/s` | `5.61–6.95 MiB` |
+| 5 GiB (`27.51M` lines) | `mmap-parallel` | `5,611–6,153 ms` | `832–913 MiB/s` | `3,895–3,914 MiB` |
+| 5 GiB (`27.51M` lines) | `LineIndex::build` | `1,600–1,794 ms` | `2,854–3,201 MiB/s` | `31.69–33.30 MiB` (`13.12 MiB` index) |
+
 ## Project Documentation
 
 - [SPEC.md](./SPEC.md) — Engineering specification and step-by-step roadmap
 - [PROGRESS.md](./PROGRESS.md) — Living development journal and status log
+- [BENCHMARKS.md](./BENCHMARKS.md) — Reproducible benchmark methodology and results
