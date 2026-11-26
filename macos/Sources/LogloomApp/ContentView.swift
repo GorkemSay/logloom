@@ -18,6 +18,7 @@ struct ContentView: View {
       }
     }
     .frame(minWidth: 760, minHeight: 480)
+    .navigationTitle(model.fileName ?? "Logloom")
     .onChange(of: model.focusSearchTrigger) { _, _ in
       isSearchFieldFocused = true
     }
@@ -102,10 +103,15 @@ struct ContentView: View {
           .padding(.top, 4)
       }
 
+      Text("⌘O Open · ⌘F Search · ⌘L Jump to Line · ⌥⌘I Inspector")
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .padding(.top, 4)
+
       Text("liblogloom \(LogFile.engineVersion)")
         .font(.caption2.monospaced())
         .foregroundStyle(.tertiary)
-        .padding(.top, 8)
+        .padding(.top, 2)
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)

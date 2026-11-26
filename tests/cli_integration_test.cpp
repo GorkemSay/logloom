@@ -150,7 +150,7 @@ std::string read_file_text(const std::filesystem::path& p) {
 TEST_CASE("logloom CLI handles global flags and error paths", "[cli]") {
   const auto ver = run_cli({"--version"});
   REQUIRE(ver.exit_code == 0);
-  REQUIRE(ver.out == "logloom 0.1.0\n");
+  REQUIRE(ver.out == "logloom 1.0.0\n");
   REQUIRE(ver.err.empty());
 
   const auto help = run_cli({"--help"});

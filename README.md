@@ -1,13 +1,13 @@
 # Logloom
 
-High-performance, local-first log and JSONL trace inspector built on a C++20 core engine (`liblogloom`) with a CLI and a planned native macOS desktop app.
+High-performance, local-first log and JSONL trace inspector built on a C++20 core engine (`liblogloom`) with a CLI and a native macOS SwiftUI + AppKit desktop application (`v1.0.0`).
 
 ## Architecture
 
 - **`core/` (`liblogloom`):** UI-agnostic C++20 static library for safe POSIX I/O, indexing, JSONL field extraction, and search.
 - **`cli/` (`logloom`):** Command-line interface consuming `liblogloom`.
 - **`tests/`:** Catch2 v3 unit, edge-case, and integration tests verified under AddressSanitizer and UndefinedBehaviorSanitizer.
-- **`macos/` *(Phase 2)*:** Native SwiftUI + AppKit desktop application linking `liblogloom` via a C ABI (`include/logloom/c_api.h`).
+- **`macos/` (`Logloom.app`):** Native macOS 14+ SwiftUI + AppKit desktop application linking `liblogloom` via a C ABI (`include/logloom/c_api.h`), signed with App Sandbox entitlements.
 
 ## Prerequisites
 
@@ -49,6 +49,22 @@ swift test --package-path macos
 open build/macos/Logloom.app
 ```
 
+**Features & Keyboard Shortcuts (`Logloom.app`):**
+- Instant first-screen `500`-line head render + non-blocking background indexing via `CancelToken`
+- Virtualized AppKit `NSTableView` backed by a bounded `32 × 256` LRU `LinePageCache`
+- Click any `Trace ID` (or context menu) to isolate its chronological timeline; live search with `120 ms` cancel-on-type debounce, `Aa` case sensitivity, `.*` regex, and level filter
+- Split `LineInspectorView` (`Formatted` pretty JSON, `Raw`, `Context ±N`) and `64 KiB` buffered streaming `.jsonl` filtered export
+
+| Shortcut | Action |
+| --- | --- |
+| `⌘O` | Open local log file (drag-and-drop and CLI file launch also supported) |
+| `⌘F` | Focus live search bar |
+| `⌘G` / `⇧⌘G` | Step to next / previous row and scroll into view |
+| `⌘L` | Jump to 1-based line number |
+| `⇧⌘E` | Export all matching / trace-isolated lines as `.jsonl` |
+| `⌥⌘I` | Toggle Line Inspector split pane |
+| `Esc` | Clear active search / exit trace isolation |
+
 ## CLI Usage
 
 `logloom` writes matched/requested data to `stdout` and diagnostics/warnings/errors to `stderr`. ANSI styling is disabled automatically when piped or when `NO_COLOR` is set.
@@ -87,6 +103,9 @@ Measured on **Apple M4** (10 cores, 16 GiB RAM, macOS 27.2.1, `release` preset) 
 | 5 GiB (`27.51M` lines) | `pread-parallel` | `1,856–1,942 ms` | `2,636–2,758 MiB/s` | `5.61–6.95 MiB` |
 | 5 GiB (`27.51M` lines) | `mmap-parallel` | `5,611–6,153 ms` | `832–913 MiB/s` | `3,895–3,914 MiB` |
 | 5 GiB (`27.51M` lines) | `LineIndex::build` | `1,600–1,794 ms` | `2,854–3,201 MiB/s` | `31.69–33.30 MiB` (`13.12 MiB` index) |
+| 1 GiB (`5.50M` lines) | `Logloom.app` (`xctrace`) | `6s` launch + full index | `222` samples / `0` hangs | `96.45 MiB` Peak RSS |
+
+Reproduce desktop app Instruments & Peak RSS profiling with `./macos/scripts/profile_app.sh` (or record a local demo GIF interactively via `./macos/scripts/record_demo.sh`).
 
 ## C ABI (`liblogloom`)
 

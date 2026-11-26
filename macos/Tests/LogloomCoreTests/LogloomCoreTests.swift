@@ -21,7 +21,7 @@ final class LogloomCoreTests: XCTestCase {
     }
 
     func testEngineVersionAndErrorOnMissingFile() {
-        XCTAssertEqual(LogFile.engineVersion, "0.1.0")
+        XCTAssertEqual(LogFile.engineVersion, "1.0.0")
         XCTAssertThrowsError(try LogFile(path: "/tmp/logloom_swift_missing_file_999.jsonl")) { err in
             guard case LogloomError.io = err else {
                 XCTFail("Expected LogloomError.io, got \(err)")

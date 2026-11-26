@@ -5,9 +5,9 @@
 
 ## Current Status
 
-- **Active Phase:** Phase 2 — Native macOS Desktop App
-- **Next Step:** `Step 2.5 — Instruments Profiling, Polish & v1.0.0`
-- **Last Completed Step:** `Step 2.4 — Line Inspector, Keyboard Navigation & Export`
+- **Active Phase:** Completed (`v1.0.0`)
+- **Next Step:** None (`v1.0.0` released)
+- **Last Completed Step:** `Step 2.5 — Instruments Profiling, Polish & v1.0.0`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -30,7 +30,7 @@
 - [x] **Step 2.2** — Virtualized Log Viewport (`NSTableView`)
 - [x] **Step 2.3** — Interactive Trace Isolation & Live Search
 - [x] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
-- [ ] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
+- [x] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
 
 ---
 
@@ -254,6 +254,21 @@
   - `./macos/scripts/bundle_app.sh` & `codesign -d --entitlements :- build/macos/Logloom.app` verified cleanly.
 - **Next:** Execute **Step 2.5** (Instruments Profiling, Polish & `v1.0.0`).
 - **Spec Drift / Follow-ups:** None.
+
+### 2026-11-26 — Step 2.5: Instruments Profiling, Polish & `v1.0.0`
+- **Files Touched:** `CMakeLists.txt`, `macos/Resources/Info.plist`, `macos/Sources/LogloomApp/LogloomApp.swift`, `macos/Sources/LogloomApp/ContentView.swift`, `macos/scripts/profile_app.sh`, `macos/scripts/record_demo.sh`, `tests/smoke_test.cpp`, `tests/cli_integration_test.cpp`, `tests/c_api_test.c`, `macos/Tests/LogloomCoreTests/LogloomCoreTests.swift`, `BENCHMARKS.md`, `README.md`, `PROGRESS.md`.
+- **Summary:**
+  - Added CLI launch file-argument handling in `LogloomApp`, dynamic `.navigationTitle` binding and shortcut hint footer in `ContentView`, and bumped the project/bundle/engine version from `0.1.0` to `1.0.0`.
+  - Added reproducible `xcrun xctrace` + RSS profiling script (`macos/scripts/profile_app.sh`) and interactive screen-capture GIF helper (`macos/scripts/record_demo.sh`).
+  - Profiled `Logloom.app` release binary opening and background indexing a `1 GiB` (`5,502,862`-line) seeded JSONL dataset, then documented verified results in `BENCHMARKS.md` and `README.md` for release `v1.0.0`.
+- **Key Decisions / Trade-offs:**
+  - Verified `xcrun xctrace record --time-limit` exits with status `54` upon time-limit `SIGKILL` of GUI targets while producing complete `.trace` bundles; `profile_app.sh` checks trace bundle creation cleanly before running `xctrace export`.
+- **Verification:**
+  - `debug-asan` (`32/32` C/C++ tests) & `release` (`32/32` C/C++ tests) passed with 0 warnings; `./build/release/cli/logloom --version` printed `logloom 1.0.0`.
+  - `swift test --package-path macos` (`8/8` `LogloomCoreTests`) passed with 0 warnings; `./macos/scripts/bundle_app.sh` built and signed `build/macos/Logloom.app`.
+  - `./macos/scripts/profile_app.sh` on `1 GiB` (`1,073,741,882` B, `5,502,862` lines): `Time Profiler` `222` samples / `0` potential hangs; `Animation Hitches` `2` cold-launch hitches; Peak RSS `96.45 MiB` (`98,768 KiB`).
+- **Next:** None — Phase 1 & Phase 2 complete (`v1.0.0`).
+- **Spec Drift / Follow-ups:** Generating `docs/demo.gif` requires interactive macOS Screen Recording permission; helper script `macos/scripts/record_demo.sh` is provided so the user can record a local demo clip directly.
 
 <!--
 Entry template for subsequent steps:

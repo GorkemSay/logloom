@@ -72,7 +72,7 @@ static void write_fixture(const char* path, const char* data) {
 
 int main(void) {
   /* 1. Version & error basics */
-  TEST_CHECK(strcmp(logloom_version(), "0.1.0") == 0);
+  TEST_CHECK(strcmp(logloom_version(), "1.0.0") == 0);
   TEST_CHECK(logloom_last_error() != NULL);
 
   logloom_file_t* bad_file = NULL;

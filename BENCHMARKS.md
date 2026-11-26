@@ -77,3 +77,15 @@ cmake --build --preset release
 1. **Bounded Peak RSS (`~6 MiB` vs. `~3.9 GiB`):** On the 5 GiB dataset, `pread-parallel` stayed under **7 MiB Peak RSS** (`1.97 MiB` single-threaded), whereas `mmap-parallel` faulted **3.89–3.91 GiB** into the process's resident set.
 2. **3x Faster at 5 GiB Scale:** When file pages fit comfortably in RAM (100 MiB and 1 GiB), `pread-parallel` and `mmap-parallel` perform within ~4% of each other (~6.0–7.5 GiB/s). Once the dataset reaches 5 GiB on a 16 GiB machine, page-fault and VM pressure degrade `mmap-parallel` to **832–913 MiB/s** (`5.6–6.2 s`), while chunked `pread-parallel` sustains **2,636–2,758 MiB/s** (`1.86–1.94 s`).
 3. **`SIGBUS` Safety:** `mmap` can crash the process with `SIGBUS` if an active log file is truncated externally while mapped. `pread` returns clean short reads / EOF without risking process termination, confirming `pread` as the right default backend.
+
+---
+
+## macOS Desktop App Profiling (`Instruments / xctrace`)
+
+Reproducible measurement script: [`./macos/scripts/profile_app.sh`](./macos/scripts/profile_app.sh) (`./build/release/tools/logloom-gen --size-mb 1024 --seed 42`, `LogloomApp` release bundle `v1.0.0`, `xctrace version 27.2 (27B52)` on macOS `27.2.1`).
+
+| Dataset | Measurement | Result | Notes |
+| --- | --- | ---: | --- |
+| `1 GiB` (`5,502,862` lines) | `Time Profiler` (`6s` launch + background index) | `222` samples / `0` potential hangs | Instant `500`-line head render + background `LineIndex` build |
+| `1 GiB` (`5,502,862` lines) | `Animation Hitches` (`5s` launch) | `2` cold-launch hitches | Initial AppKit/SwiftUI window creation only |
+| `1 GiB` (`5,502,862` lines) | Peak RSS (`24` samples across `6s`) | `96.45 MiB` (`98,768 KiB`) | Bounded `LinePageCache` (`32 × 256` rows) + strided index |

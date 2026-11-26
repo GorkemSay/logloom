@@ -8,7 +8,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        enqueueLaunchArgumentFileIfPresent()
         flushPendingURLs()
+    }
+
+    private func enqueueLaunchArgumentFileIfPresent() {
+        var skipNext = false
+        for arg in CommandLine.arguments.dropFirst() {
+            if skipNext {
+                skipNext = false
+                continue
+            }
+            if arg.hasPrefix("-") {
+                // Skip Cocoa launch flags and their paired values such as -NSDocumentRevisionsDebugMode YES.
+                skipNext = (arg == "-NSDocumentRevisionsDebugMode" || arg == "-AppleLanguages")
+                continue
+            }
+            let url = URL(fileURLWithPath: arg)
+            if FileManager.default.fileExists(atPath: url.path) {
+                pendingURLs.append(url)
+                break
+            }
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
