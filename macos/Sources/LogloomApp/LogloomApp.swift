@@ -61,6 +61,40 @@ struct LogloomDesktopApp: App {
                 }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(!model.hasOpenFile)
+
+                Button("Next Match") {
+                    model.selectNextMatch()
+                }
+                .keyboardShortcut("g", modifiers: .command)
+                .disabled(!model.hasOpenFile || model.rowCount == 0)
+
+                Button("Previous Match") {
+                    model.selectPreviousMatch()
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(!model.hasOpenFile || model.rowCount == 0)
+
+                Divider()
+
+                Button("Jump to Line...") {
+                    model.requestJumpToLine()
+                }
+                .keyboardShortcut("l", modifiers: .command)
+                .disabled(!model.hasOpenFile)
+
+                Button("Export Filtered...") {
+                    model.exportFilteredPanel()
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!model.hasOpenFile || !model.isFilterActive || model.isExporting)
+
+                Divider()
+
+                Button(model.isInspectorVisible ? "Hide Inspector" : "Show Inspector") {
+                    model.toggleInspector()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(!model.hasOpenFile)
             }
         }
     }

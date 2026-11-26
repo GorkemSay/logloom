@@ -49,6 +49,15 @@ final class AppModel: ObservableObject {
   @Published private(set) var searchDurationMs: Double? = nil
   @Published private(set) var focusSearchTrigger: UInt64 = 0
 
+  @Published var isInspectorVisible: Bool = true
+  @Published private(set) var selectedLine: LogLine? = nil
+  @Published private(set) var contextLines: [LogLine] = []
+  @Published var contextRadius: Int = 10
+  @Published var isJumpToLinePresented: Bool = false
+  @Published private(set) var isExporting: Bool = false
+  @Published private(set) var exportStatusMessage: String? = nil
+  @Published private(set) var scrollToSelectionTrigger: UInt64 = 0
+
   let viewportStore = ViewportStore()
 
   private static let interactiveMatchLimit: UInt64 = 100_000
@@ -131,6 +140,11 @@ final class AppModel: ObservableObject {
       self.oversizedLineCount = 0
       self.truncatedBannerDismissed = false
       self.selectedLineNumber = nil
+      self.selectedLine = nil
+      self.contextLines = []
+      self.isJumpToLinePresented = false
+      self.isExporting = false
+      self.exportStatusMessage = nil
       self.errorMessage = nil
 
       resetFilterState()
@@ -165,11 +179,158 @@ final class AppModel: ObservableObject {
     oversizedLineCount = 0
     truncatedBannerDismissed = false
     selectedLineNumber = nil
+    selectedLine = nil
+    contextLines = []
+    isJumpToLinePresented = false
+    isExporting = false
+    exportStatusMessage = nil
     errorMessage = nil
 
     resetFilterState()
     viewportStore.configureFile(nil, headLines: [])
     viewportRevision &+= 1
+  }
+
+  func refreshSelectedLineAndContext() {
+    guard let lineNum = selectedLineNumber else {
+      selectedLine = nil
+      contextLines = []
+      return
+    }
+
+    if let row = viewportStore.rowIndex(forLineNumber: lineNum),
+      let cached = viewportStore.line(atRow: row)
+    {
+      selectedLine = cached
+    } else if isIndexed, let file = openedFile {
+      selectedLine = try? file.readLine(lineNum)
+    } else {
+      selectedLine = nil
+    }
+
+    if isInspectorVisible, isIndexed, let file = openedFile {
+      let radius = UInt64(max(1, contextRadius))
+      contextLines = (try? file.readContext(around: lineNum, before: radius, after: radius)) ?? []
+    } else {
+      contextLines = []
+    }
+  }
+
+  func toggleInspector() {
+    isInspectorVisible.toggle()
+    refreshSelectedLineAndContext()
+  }
+
+  func selectNextMatch() {
+    let count = viewportStore.rowCount
+    guard count > 0 else { return }
+    let currentRow = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
+    let nextRow = currentRow.map { ($0 + 1) % count } ?? 0
+    if let line = viewportStore.line(atRow: nextRow) {
+      selectedLineNumber = line.lineNumber
+      scrollToSelectionTrigger &+= 1
+      refreshSelectedLineAndContext()
+    }
+  }
+
+  func selectPreviousMatch() {
+    let count = viewportStore.rowCount
+    guard count > 0 else { return }
+    let currentRow = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
+    let prevRow = currentRow.map { ($0 - 1 + count) % count } ?? (count - 1)
+    if let line = viewportStore.line(atRow: prevRow) {
+      selectedLineNumber = line.lineNumber
+      scrollToSelectionTrigger &+= 1
+      refreshSelectedLineAndContext()
+    }
+  }
+
+  func requestJumpToLine() {
+    guard hasOpenFile else { return }
+    isJumpToLinePresented = true
+  }
+
+  func jumpToLine(_ lineNumber: UInt64, clearFiltersIfNeeded: Bool = true) {
+    guard lineNumber > 0 else { return }
+    let maxAvailable: UInt64
+    if isIndexed {
+      maxAvailable = openedFile?.lineCount ?? 0
+    } else {
+      maxAvailable = UInt64(viewportStore.pageCache.rowCount)
+    }
+    guard maxAvailable > 0 else { return }
+
+    let clampedLine = min(lineNumber, maxAvailable)
+    if viewportStore.mode == .filtered,
+      viewportStore.rowIndex(forLineNumber: clampedLine) == nil,
+      clearFiltersIfNeeded
+    {
+      clearAllFilters()
+    }
+
+    selectedLineNumber = clampedLine
+    scrollToSelectionTrigger &+= 1
+    refreshSelectedLineAndContext()
+  }
+
+  func exportFilteredPanel() {
+    guard let file = openedFile, isFilterActive, !isExporting else { return }
+
+    let panel = NSSavePanel()
+    panel.title = "Export Filtered Logs"
+    panel.canCreateDirectories = true
+    var allowedTypes: [UTType] = [.plainText]
+    if let jsonl = UTType(filenameExtension: "jsonl") {
+      allowedTypes.insert(jsonl, at: 0)
+    }
+    panel.allowedContentTypes = allowedTypes
+
+    let baseStem = (fileName as NSString?)?.deletingPathExtension ?? "logloom"
+    let suffix = isolatedTraceID.map { "trace-\($0)" } ?? "filtered"
+    panel.nameFieldStringValue = "\(baseStem)-\(suffix).jsonl"
+
+    guard panel.runModal() == .OK, let destinationURL = panel.url else {
+      return
+    }
+
+    let sourcePath = filePath
+    let fileGeneration = openGeneration
+    let query = SearchQuery(
+      traceID: isolatedTraceID,
+      level: selectedLevel,
+      textQuery: searchText.isEmpty ? nil : searchText,
+      caseSensitive: isCaseSensitive,
+      isRegex: isRegex,
+      limit: 0,
+      numThreads: 0
+    )
+
+    isExporting = true
+    exportStatusMessage = "Exporting..."
+    errorMessage = nil
+
+    Task.detached(priority: .userInitiated) { [weak self] in
+      do {
+        let count = try LogExporter.exportFiltered(
+          file: file,
+          sourcePath: sourcePath,
+          query: query,
+          to: destinationURL
+        )
+        await MainActor.run { [weak self] in
+          guard let self, self.openGeneration == fileGeneration else { return }
+          self.isExporting = false
+          self.exportStatusMessage = "Exported \(count) line(s) to \(destinationURL.lastPathComponent)"
+        }
+      } catch {
+        await MainActor.run { [weak self] in
+          guard let self, self.openGeneration == fileGeneration else { return }
+          self.isExporting = false
+          self.exportStatusMessage = nil
+          self.errorMessage = error.localizedDescription
+        }
+      }
+    }
   }
 
   func requestSearchFocus() {
@@ -203,7 +364,9 @@ final class AppModel: ObservableObject {
     cancelActiveSearch()
 
     guard let file = openedFile, isFilterActive else {
-      let needsReload = viewportStore.mode == .filtered || searchError != nil || searchStats != nil || searchMatchCount > 0
+      let needsReload =
+        viewportStore.mode == .filtered || searchError != nil || searchStats != nil
+        || searchMatchCount > 0
       searchError = nil
       searchStats = nil
       searchMatchCount = 0
@@ -386,6 +549,7 @@ final class AppModel: ObservableObject {
           self.oversizedLineCount = stats.oversizedLines
           self.viewportStore.pageCache.clearCache()
           self.viewportRevision &+= 1
+          self.refreshSelectedLineAndContext()
         }
       } catch {
         await MainActor.run { [weak self] in

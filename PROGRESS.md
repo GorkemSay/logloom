@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 2 — Native macOS Desktop App
-- **Next Step:** `Step 2.4 — Line Inspector, Keyboard Navigation & Export`
-- **Last Completed Step:** `Step 2.3 — Interactive Trace Isolation & Live Search`
+- **Next Step:** `Step 2.5 — Instruments Profiling, Polish & v1.0.0`
+- **Last Completed Step:** `Step 2.4 — Line Inspector, Keyboard Navigation & Export`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -29,7 +29,7 @@
 - [x] **Step 2.1** — macOS App Skeleton & `liblogloom` C-ABI Bridge
 - [x] **Step 2.2** — Virtualized Log Viewport (`NSTableView`)
 - [x] **Step 2.3** — Interactive Trace Isolation & Live Search
-- [ ] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
+- [x] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
 - [ ] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
 
 ---
@@ -237,6 +237,22 @@
   - `swift test --package-path macos` (`6/6` `LogloomCoreTests`, including `testViewportStoreFullAndFilteredModes` and `testTraceIsolationAndInvalidRegex`) passed with 0 warnings.
   - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` cleanly.
 - **Next:** Execute **Step 2.4** (Line Inspector, Keyboard Navigation & Export).
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-26 — Step 2.4: Line Inspector, Keyboard Navigation & Export
+- **Files Touched:** `macos/Resources/Logloom.entitlements`, `macos/Sources/LogloomCore/LogInspectorHelpers.swift`, `macos/Sources/LogloomApp/AppModel.swift`, `macos/Sources/LogloomApp/VirtualizedLogTableView.swift`, `macos/Sources/LogloomApp/LineInspectorView.swift`, `macos/Sources/LogloomApp/ContentView.swift`, `macos/Sources/LogloomApp/LogloomApp.swift`, `macos/Tests/LogloomCoreTests/LogloomCoreTests.swift`, `PROGRESS.md`.
+- **Summary:**
+  - Updated App Sandbox entitlements to `com.apple.security.files.user-selected.read-write` so `NSSavePanel` exports work cleanly while source log files remain strictly `O_RDONLY`.
+  - Added `JSONFormatter` (bounded 1 MiB pretty-printing with sorted keys and unescaped slashes) and `LogExporter` (64 KiB buffered streaming `.jsonl` export with `limit = 0`, source-overwrite guard, and atomic partial-file cleanup on cancellation/error).
+  - Created `LineInspectorView` split detail pane (`Formatted`, `Raw`, and `Context` tabs, metadata header, copy raw, isolate/exit trace, adjustable `±5`/`±10`/`±25`/`±50` surrounding context via `LogFile.readContext`, and click-to-jump).
+  - Wired keyboard shortcuts (`⌘G`/`⇧⌘G` next/previous row, `⌘L` jump-to-line sheet, `⇧⌘E` filtered export, `⌥⌘I` toggle inspector, `Esc` filter clear) and programmatic table scroll-to-selection triggers in `VirtualizedLogTableView`.
+- **Key Decisions / Trade-offs:**
+  - Exported filtered results run on a background detached task with `limit = 0` rather than exporting only the viewport's 100k capped rows, ensuring exported `.jsonl` traces and search results remain complete.
+- **Verification:**
+  - `debug-asan` (`32/32` C/C++ tests) & `release` (`32/32` C/C++ tests) passed with 0 warnings.
+  - `swift test --package-path macos` (`8/8` `LogloomCoreTests`, adding `testJSONFormatterPrettyPrintAndFallback` and `testLogExporterFilteredAndCancellation`) passed with 0 warnings.
+  - `./macos/scripts/bundle_app.sh` & `codesign -d --entitlements :- build/macos/Logloom.app` verified cleanly.
+- **Next:** Execute **Step 2.5** (Instruments Profiling, Polish & `v1.0.0`).
 - **Spec Drift / Follow-ups:** None.
 
 <!--

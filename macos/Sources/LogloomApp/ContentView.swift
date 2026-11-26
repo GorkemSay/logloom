@@ -33,6 +33,18 @@ struct ContentView: View {
     .onChange(of: model.selectedLevel) { _, _ in
       model.scheduleSearch(immediate: true)
     }
+    .onChange(of: model.selectedLineNumber) { _, _ in
+      model.refreshSelectedLineAndContext()
+    }
+    .onChange(of: model.contextRadius) { _, _ in
+      model.refreshSelectedLineAndContext()
+    }
+    .onChange(of: model.isInspectorVisible) { _, _ in
+      model.refreshSelectedLineAndContext()
+    }
+    .sheet(isPresented: $model.isJumpToLinePresented) {
+      JumpToLineSheet(model: model)
+    }
     .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
     .overlay {
       if isDropTargeted {
@@ -48,6 +60,18 @@ struct ContentView: View {
           model.openPanel()
         }
         if model.hasOpenFile {
+          Button("Export Filtered...") {
+            model.exportFilteredPanel()
+          }
+          .disabled(!model.isFilterActive || model.isExporting)
+
+          Button {
+            model.toggleInspector()
+          } label: {
+            Image(systemName: "sidebar.right")
+          }
+          .help(model.isInspectorVisible ? "Hide Line Inspector" : "Show Line Inspector")
+
           Button("Close") {
             model.closeFile()
           }
@@ -206,14 +230,23 @@ struct ContentView: View {
         Divider()
       }
 
-      VirtualizedLogTableView(
-        viewportStore: model.viewportStore,
-        viewportRevision: model.viewportRevision,
-        isolatedTraceID: model.isolatedTraceID,
-        selectedLineNumber: $model.selectedLineNumber,
-        onTraceIDClick: { model.isolateTrace($0) },
-        onClearTraceIsolation: { model.clearTraceIsolation() }
-      )
+      HSplitView {
+        VirtualizedLogTableView(
+          viewportStore: model.viewportStore,
+          viewportRevision: model.viewportRevision,
+          isolatedTraceID: model.isolatedTraceID,
+          selectedLineNumber: $model.selectedLineNumber,
+          scrollToSelectionTrigger: model.scrollToSelectionTrigger,
+          onTraceIDClick: { model.isolateTrace($0) },
+          onClearTraceIsolation: { model.clearTraceIsolation() }
+        )
+        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+
+        if model.isInspectorVisible {
+          LineInspectorView(model: model)
+            .frame(minWidth: 280, idealWidth: 380, maxWidth: 640, maxHeight: .infinity)
+        }
+      }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       Divider()
@@ -236,10 +269,16 @@ struct ContentView: View {
             .foregroundStyle(.orange)
         }
 
+        if let exportMsg = model.exportStatusMessage {
+          Text(exportMsg)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+
         Spacer()
 
         if let selectedLine = model.selectedLineNumber {
-          Text("Selected line \(selectedLine)")
+          Text("Line \(selectedLine)")
         }
       }
       .font(.caption.monospacedDigit())
@@ -247,6 +286,11 @@ struct ContentView: View {
       .padding(.horizontal, 14)
       .padding(.vertical, 5)
       .background(.bar)
+    }
+    .onExitCommand {
+      if model.isFilterActive {
+        model.clearAllFilters()
+      }
     }
   }
 
@@ -377,5 +421,61 @@ struct ContentView: View {
       }
     }
     return true
+  }
+}
+
+private struct JumpToLineSheet: View {
+  @ObservedObject var model: AppModel
+  @Environment(\.dismiss) private var dismiss
+  @State private var lineInput: String = ""
+  @FocusState private var isInputFocused: Bool
+
+  private var parsedLineNumber: UInt64? {
+    let trimmed = lineInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let value = UInt64(trimmed), value > 0 else {
+      return nil
+    }
+    return value
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Jump to Line")
+        .font(.headline)
+
+      TextField("Line number (1...)", text: $lineInput)
+        .textFieldStyle(.roundedBorder)
+        .font(.system(.body, design: .monospaced).monospacedDigit())
+        .focused($isInputFocused)
+        .onSubmit(submit)
+
+      HStack {
+        Spacer()
+        Button("Cancel") {
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+
+        Button("Jump") {
+          submit()
+        }
+        .keyboardShortcut(.defaultAction)
+        .disabled(parsedLineNumber == nil)
+      }
+    }
+    .padding(18)
+    .frame(width: 280)
+    .onAppear {
+      if let selected = model.selectedLineNumber {
+        lineInput = "\(selected)"
+      }
+      isInputFocused = true
+    }
+  }
+
+  private func submit() {
+    guard let target = parsedLineNumber else { return }
+    model.jumpToLine(target, clearFiltersIfNeeded: true)
+    dismiss()
   }
 }

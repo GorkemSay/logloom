@@ -227,4 +227,82 @@ final class LogloomCoreTests: XCTestCase {
             }
         }
     }
+
+    func testJSONFormatterPrettyPrintAndFallback() {
+        let compact = "{\"b\":2,\"a\":{\"x\":\"http://example.com/1\"}}"
+        let pretty = JSONFormatter.prettyPrint(compact)
+        XCTAssertNotNil(pretty)
+        XCTAssertTrue(pretty?.contains("\n") == true)
+        XCTAssertTrue(pretty?.contains("http://example.com/1") == true)
+
+        XCTAssertNil(JSONFormatter.prettyPrint("plain text line"))
+        XCTAssertNil(JSONFormatter.prettyPrint("{broken json"))
+        XCTAssertNil(JSONFormatter.prettyPrint("12345"))
+        XCTAssertNil(JSONFormatter.prettyPrint(""))
+
+        let huge = "{\"msg\":\"" + String(repeating: "x", count: JSONFormatter.maxPrettyPrintBytes + 64) + "\"}"
+        XCTAssertNil(JSONFormatter.prettyPrint(huge))
+    }
+
+    func testLogExporterFilteredAndCancellation() throws {
+        var rows: [String] = []
+        rows.reserveCapacity(40)
+        for i in 1...40 {
+            let trace = (i % 4 == 0) ? "tr-export" : "tr-other"
+            let level = (i % 8 == 0) ? "ERROR" : "INFO"
+            rows.append("{\"timestamp\":\"2026-11-26T10:00:\(String(format: "%02d", i % 60))Z\",\"level\":\"\(level)\",\"request_id\":\"\(trace)\",\"seq\":\(i)}")
+        }
+        let sourceURL = try makeFixture(rows.joined(separator: "\n") + "\n")
+        let destURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("logloom_export_\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: destURL) }
+
+        let file = try LogFile(path: sourceURL.path)
+
+        XCTAssertThrowsError(
+            try LogExporter.exportFiltered(
+                file: file,
+                sourcePath: sourceURL.path,
+                query: SearchQuery(traceID: "tr-export"),
+                to: sourceURL
+            )
+        ) { err in
+            XCTAssertEqual(err as? LogExportError, .cannotOverwriteSourceFile)
+        }
+
+        let exportedCount = try LogExporter.exportFiltered(
+            file: file,
+            sourcePath: sourceURL.path,
+            query: SearchQuery(traceID: "tr-export"),
+            to: destURL
+        )
+        XCTAssertEqual(exportedCount, 10)
+
+        let exportedContents = try String(contentsOf: destURL, encoding: .utf8)
+        let exportedLines = exportedContents.split(separator: "\n")
+        XCTAssertEqual(exportedLines.count, 10)
+        XCTAssertTrue(exportedLines.allSatisfy { $0.contains("\"request_id\":\"tr-export\"") })
+
+        let cancelToken = CancelToken()
+        cancelToken.cancel()
+        let cancelledDest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("logloom_export_cancel_\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: cancelledDest) }
+
+        XCTAssertThrowsError(
+            try LogExporter.exportFiltered(
+                file: file,
+                sourcePath: sourceURL.path,
+                query: SearchQuery(traceID: "tr-export"),
+                to: cancelledDest,
+                cancelToken: cancelToken
+            )
+        ) { err in
+            guard case LogloomError.cancelled = err else {
+                XCTFail("Expected cancelled error, got \(err)")
+                return
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cancelledDest.path))
+    }
 }
