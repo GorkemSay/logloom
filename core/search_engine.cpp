@@ -308,14 +308,16 @@ SearchStats search_file_parallel(
         }
 
         ++part_res.stats.matches_found;
-        part_res.matches.push_back(detail::OwnedMatch{
-            .local_line_number = view.line_number,
-            .byte_offset = view.byte_offset,
-            .byte_length = view.byte_length,
-            .content = std::string(view.content),
-            .has_crlf = view.has_crlf,
-            .is_truncated_eof = view.is_truncated_eof,
-        });
+        if (on_match) {
+          part_res.matches.push_back(detail::OwnedMatch{
+              .local_line_number = view.line_number,
+              .byte_offset = view.byte_offset,
+              .byte_length = view.byte_length,
+              .content = std::string(view.content),
+              .has_crlf = view.has_crlf,
+              .is_truncated_eof = view.is_truncated_eof,
+          });
+        }
       }
 
       if (part_res.ec) {
@@ -377,16 +379,29 @@ SearchStats search_file_parallel(
     detail::merge_partition_stats(part_res.stats, total_stats);
 
     bool stop_emitting = false;
-    for (const auto& owned : part_res.matches) {
-      if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) {
-        total_stats.cancelled = true;
-        stop_emitting = true;
-        break;
+    if (!on_match) {
+      if (query.limit > 0) {
+        const std::uint64_t remaining = query.limit - total_stats.matches_found;
+        if (part_res.stats.matches_found >= remaining) {
+          total_stats.matches_found = query.limit;
+          total_stats.limit_reached = true;
+          stop_emitting = true;
+        } else {
+          total_stats.matches_found += part_res.stats.matches_found;
+        }
+      } else {
+        total_stats.matches_found += part_res.stats.matches_found;
       }
+    } else {
+      for (const auto& owned : part_res.matches) {
+        if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) {
+          total_stats.cancelled = true;
+          stop_emitting = true;
+          break;
+        }
 
-      ++total_stats.matches_found;
+        ++total_stats.matches_found;
 
-      if (on_match) {
         const ExtractedFields fields = extract_jsonl_fields(owned.content, extract_opts);
         const SearchMatch match{
             .line_number = line_offset + owned.local_line_number,
@@ -402,12 +417,12 @@ SearchStats search_file_parallel(
           stop_emitting = true;
           break;
         }
-      }
 
-      if (query.limit > 0 && total_stats.matches_found >= query.limit) {
-        total_stats.limit_reached = true;
-        stop_emitting = true;
-        break;
+        if (query.limit > 0 && total_stats.matches_found >= query.limit) {
+          total_stats.limit_reached = true;
+          stop_emitting = true;
+          break;
+        }
       }
     }
 

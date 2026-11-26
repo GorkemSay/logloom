@@ -180,6 +180,17 @@
 - **Next:** Execute **Step 2.1** (macOS App Skeleton & `liblogloom` C-ABI Bridge via SwiftPM).
 - **Spec Drift / Follow-ups:** None. Phase 1 complete and tagged `v0.1.0`.
 
+### 2026-11-26 — Phase 1 Post-Release Audit & Phase 2 C-ABI Hardening
+- **Files Touched:** `core/search_engine.cpp`, `core/mmap_reader.cpp`, `core/line_index.cpp`, `core/posix_file.cpp`, `include/logloom/c_api.h`, `core/c_api.cpp`, `cli/main.cpp`, `tests/parallel_search_test.cpp`, `tests/line_reader_test.cpp`, `tests/cli_integration_test.cpp`, `tests/c_api_test.c`, `SPEC.md`, `README.md`, `PROGRESS.md`.
+- **Summary:**
+  - Skipped `OwnedMatch` string materialization in `search_file_parallel` and `search_file_mmap` when `on_match` is empty (zero unnecessary allocations for `logloom stats`), preserving exact match counts and `limit` semantics.
+  - Added Phase 2 C-ABI primitives: `logloom_file_read_head` (instant pre-index first-screen preview) and zero-copy `logloom_extract_fields`, and removed `const_cast` in `core/c_api.cpp` via `mutable last_error`.
+  - Opened input file before `--export` target in `logloom trace` so missing input never creates/truncates the export file; capped `LineIndex` checkpoint vector growth to `max_checkpoints`; rejected non-regular files (`!S_ISREG`) in `PosixFile::open_read_only`; aligned `SPEC.md` (`c_api.h`).
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `32/32` tests (`3.33 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `32/32` tests (`1.06 sec`).
+- **Next:** Execute **Step 2.1** (macOS App Skeleton & `liblogloom` C-ABI Bridge via SwiftPM).
+
 <!--
 Entry template for subsequent steps:
 

@@ -55,6 +55,17 @@ typedef struct logloom_line_list {
   size_t count;
 } logloom_line_list_t;
 
+typedef struct logloom_extracted_fields {
+  logloom_line_kind_t kind;
+  const char* timestamp;
+  size_t timestamp_length;
+  const char* level;
+  size_t level_length;
+  const char* trace_id;
+  size_t trace_id_length;
+  bool has_escapes_in_trace_id;
+} logloom_extracted_fields_t;
+
 typedef struct logloom_search_query {
   const char* trace_id;
   const char* trace_key;
@@ -155,7 +166,25 @@ logloom_status_t logloom_file_read_context(
     uint64_t after,
     logloom_line_list_t* out_list);
 
+/* Reads up to `max_lines` from the start of `file` without requiring an index.
+   Useful for instant first-screen rendering while background indexing runs. */
+logloom_status_t logloom_file_read_head(
+    const logloom_file_t* file,
+    size_t max_lines,
+    logloom_line_list_t* out_list);
+
 void logloom_line_list_free(logloom_line_list_t* list);
+
+/* Zero-copy JSONL top-level field extraction over `line[0..line_length)`.
+   Returned pointers alias `line` (not NUL-terminated; use *_length).
+   Pass NULL for any key parameter to use its default ("request_id", "timestamp", "level"). */
+logloom_status_t logloom_extract_fields(
+    const char* line,
+    size_t line_length,
+    const char* trace_key,
+    const char* timestamp_key,
+    const char* level_key,
+    logloom_extracted_fields_t* out_fields);
 
 /* Streaming parallel search and trace isolation. */
 logloom_search_query_t logloom_search_query_default(void);

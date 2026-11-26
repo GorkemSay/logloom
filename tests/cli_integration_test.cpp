@@ -256,6 +256,21 @@ TEST_CASE("logloom trace isolates traces, merges context hunks, and exports safe
     const auto nomatch = run_cli({"trace", log_file.path().string(), "--id", "req-999"});
     REQUIRE(nomatch.exit_code == 1);
     REQUIRE(nomatch.out.empty());
+
+    const auto untouched_export =
+        std::filesystem::temp_directory_path() / "logloom_should_not_be_created.jsonl";
+    std::error_code rm_ec;
+    std::filesystem::remove(untouched_export, rm_ec);
+    const auto missing_in = run_cli({
+        "trace",
+        "/tmp/logloom_missing_input_98765.jsonl",
+        "--id",
+        "req-1",
+        "--export",
+        untouched_export.string(),
+    });
+    REQUIRE(missing_in.exit_code == 2);
+    REQUIRE_FALSE(std::filesystem::exists(untouched_export));
   }
 }
 

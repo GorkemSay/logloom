@@ -53,6 +53,12 @@ std::optional<PosixFile> PosixFile::open_read_only(
     return std::nullopt;
   }
 
+  if (!S_ISREG(st.st_mode)) {
+    ::close(fd);
+    ec = std::make_error_code(std::errc::invalid_argument);
+    return std::nullopt;
+  }
+
   const std::uint64_t file_size =
       st.st_size > 0 ? static_cast<std::uint64_t>(st.st_size) : 0ULL;
   return PosixFile(fd, file_size);

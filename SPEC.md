@@ -13,7 +13,7 @@
 **Non-Negotiable Principles:**
 1. **Fast & Measurable:** Optimize based on measurements, not guesses. Never publish unverified performance claims.
 2. **Resilient:** Never crash, hang, or OOM on malformed JSON, invalid UTF-8, huge single lines, or truncated files.
-3. **Clean Architecture:** Core I/O, indexing, and search live in a UI-agnostic C++20 library (`liblogloom`) exposed via a thin C ABI (`logloom_c.h`). CLI and macOS UI are thin consumers.
+3. **Clean Architecture:** Core I/O, indexing, and search live in a UI-agnostic C++20 library (`liblogloom`) exposed via a thin C ABI (`c_api.h`). CLI and macOS UI are thin consumers.
 4. **Zero AI Slop:** Clean, restrained, native craft in both CLI output and macOS UI. No gimmicky gradients, emoji clutter, or over-engineered abstractions.
 
 ---

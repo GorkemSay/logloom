@@ -284,6 +284,28 @@ TEST_CASE("search_file_parallel enforces limit, cancellation, and invalid regex 
     REQUIRE(ec == std::errc::invalid_argument);
     REQUIRE(stats.matches_found == 0);
   }
+
+  SECTION("empty callback counts matches accurately without materializing OwnedMatch") {
+    const logloom::SearchQuery q{
+        .level = "ERROR",
+        .reader_options = {.chunk_size = 32, .max_line_bytes = 128},
+    };
+    const auto seq_stats = logloom::search_file(*file, q, {}, ec);
+    REQUIRE_FALSE(ec);
+
+    const auto par_stats = logloom::search_file_parallel(
+        *file, q, {}, ec, {.num_threads = 4, .partition_bytes = 64});
+    REQUIRE_FALSE(ec);
+    require_same_stats(par_stats, seq_stats);
+
+    logloom::SearchQuery lim_q = q;
+    lim_q.limit = 5;
+    const auto par_lim = logloom::search_file_parallel(
+        *file, lim_q, {}, ec, {.num_threads = 4, .partition_bytes = 64});
+    REQUIRE_FALSE(ec);
+    REQUIRE(par_lim.matches_found == 5);
+    REQUIRE(par_lim.limit_reached);
+  }
 }
 
 TEST_CASE("search_file_parallel handles empty, BOM-only, and single-huge-line files", "[parallel_search][edge]") {

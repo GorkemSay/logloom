@@ -26,7 +26,7 @@ struct logloom_file {
   mutable std::shared_mutex index_mutex{};
   std::optional<logloom::LineIndex> index{};
   mutable std::mutex error_mutex{};
-  std::string last_error{};
+  mutable std::string last_error{};
 };
 
 namespace {
@@ -38,7 +38,7 @@ void set_error(const logloom_file_t* file, const std::string& msg) noexcept {
     tls_last_error = msg;
     if (file != nullptr) {
       std::lock_guard<std::mutex> lock(file->error_mutex);
-      const_cast<logloom_file_t*>(file)->last_error = msg;
+      file->last_error = msg;
     }
   } catch (...) {
   }
@@ -49,7 +49,7 @@ void clear_error(const logloom_file_t* file) noexcept {
     tls_last_error.clear();
     if (file != nullptr) {
       std::lock_guard<std::mutex> lock(file->error_mutex);
-      const_cast<logloom_file_t*>(file)->last_error.clear();
+      file->last_error.clear();
     }
   } catch (...) {
   }
@@ -407,6 +407,85 @@ logloom_status_t logloom_file_read_context(
   }
 }
 
+logloom_status_t logloom_file_read_head(
+    const logloom_file_t* file,
+    size_t max_lines,
+    logloom_line_list_t* out_list) {
+  if (out_list != nullptr) {
+    out_list->lines = nullptr;
+    out_list->count = 0;
+  }
+  if (file == nullptr || !file->handle.is_open() || out_list == nullptr) {
+    set_error(file, "invalid arguments to logloom_file_read_head");
+    return LOGLOOM_ERR_INVALID_ARG;
+  }
+
+  try {
+    clear_error(file);
+    if (max_lines == 0) {
+      return LOGLOOM_OK;
+    }
+
+    logloom::ChunkedLineReader reader(
+        file->handle,
+        logloom::LineReaderOptions{
+            .chunk_size = 64 * 1024,
+            .strip_utf8_bom = true,
+            .start_offset = 0,
+        });
+
+    std::vector<logloom::IndexedLine> rows;
+    rows.reserve(std::min<std::size_t>(max_lines, 512U));
+
+    logloom::LineView view{};
+    std::error_code ec;
+    while (rows.size() < max_lines && reader.next_line(view, ec)) {
+      rows.push_back(logloom::IndexedLine{
+          .line_number = view.line_number,
+          .byte_offset = view.byte_offset,
+          .byte_length = view.byte_length,
+          .content = std::string(view.content),
+          .has_crlf = view.has_crlf,
+          .is_truncated_eof = view.is_truncated_eof,
+          .exceeds_max_length = view.exceeds_max_length,
+      });
+    }
+    if (ec) {
+      set_error(file, ec.message());
+      return LOGLOOM_ERR_IO;
+    }
+    if (rows.empty()) {
+      return LOGLOOM_OK;
+    }
+
+    auto* arr = static_cast<logloom_line_t*>(
+        std::calloc(rows.size(), sizeof(logloom_line_t)));
+    if (arr == nullptr) {
+      set_error(file, "out of memory allocating head lines");
+      return LOGLOOM_ERR_INTERNAL;
+    }
+    out_list->lines = arr;
+    out_list->count = rows.size();
+
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      if (!fill_c_line(rows[i], arr[i])) {
+        logloom_line_list_free(out_list);
+        set_error(file, "out of memory allocating head line content");
+        return LOGLOOM_ERR_INTERNAL;
+      }
+    }
+    return LOGLOOM_OK;
+  } catch (const std::exception& ex) {
+    logloom_line_list_free(out_list);
+    set_error(file, ex.what());
+    return LOGLOOM_ERR_INTERNAL;
+  } catch (...) {
+    logloom_line_list_free(out_list);
+    set_error(file, "unknown internal error in logloom_file_read_head");
+    return LOGLOOM_ERR_INTERNAL;
+  }
+}
+
 void logloom_line_list_free(logloom_line_list_t* list) {
   if (list == nullptr) {
     return;
@@ -419,6 +498,53 @@ void logloom_line_list_free(logloom_line_list_t* list) {
   }
   list->lines = nullptr;
   list->count = 0;
+}
+
+logloom_status_t logloom_extract_fields(
+    const char* line,
+    size_t line_length,
+    const char* trace_key,
+    const char* timestamp_key,
+    const char* level_key,
+    logloom_extracted_fields_t* out_fields) {
+  if (out_fields != nullptr) {
+    std::memset(out_fields, 0, sizeof(*out_fields));
+  }
+  if (out_fields == nullptr || (line == nullptr && line_length > 0)) {
+    set_error(nullptr, "invalid arguments to logloom_extract_fields");
+    return LOGLOOM_ERR_INVALID_ARG;
+  }
+
+  logloom::JsonlExtractOptions opts{};
+  if (trace_key != nullptr) {
+    opts.trace_key = std::string_view(trace_key);
+  }
+  if (timestamp_key != nullptr) {
+    opts.timestamp_key = std::string_view(timestamp_key);
+  }
+  if (level_key != nullptr) {
+    opts.level_key = std::string_view(level_key);
+  }
+
+  const std::string_view sv = (line != nullptr) ? std::string_view(line, line_length)
+                                                : std::string_view{};
+  const logloom::ExtractedFields extracted = logloom::extract_jsonl_fields(sv, opts);
+
+  out_fields->kind = to_c_kind(extracted.kind);
+  if (extracted.timestamp.has_value()) {
+    out_fields->timestamp = extracted.timestamp->data();
+    out_fields->timestamp_length = extracted.timestamp->size();
+  }
+  if (extracted.level.has_value()) {
+    out_fields->level = extracted.level->data();
+    out_fields->level_length = extracted.level->size();
+  }
+  if (extracted.trace_id.has_value()) {
+    out_fields->trace_id = extracted.trace_id->data();
+    out_fields->trace_id_length = extracted.trace_id->size();
+  }
+  out_fields->has_escapes_in_trace_id = extracted.has_escapes_in_trace_id;
+  return LOGLOOM_OK;
 }
 
 logloom_search_query_t logloom_search_query_default(void) {

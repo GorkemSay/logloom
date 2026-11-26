@@ -119,6 +119,12 @@ TEST_CASE("PosixFile handles errors, regular files, pread_full, and moves", "[po
     REQUIRE(ec == std::errc::is_a_directory);
   }
 
+  SECTION("non-regular character device fails with invalid_argument") {
+    auto f = logloom::PosixFile::open_read_only("/dev/null", ec);
+    REQUIRE_FALSE(f.has_value());
+    REQUIRE(ec == std::errc::invalid_argument);
+  }
+
   SECTION("open, pread_full at offset and past EOF, and move semantics") {
     TempFile tmp("0123456789");
     auto opt = logloom::PosixFile::open_read_only(tmp.path(), ec);

@@ -241,6 +241,11 @@ int run_trace(int argc, char* argv[], bool use_color) {
     return kExitError;
   }
 
+  const auto file = open_input_file(*file_path);
+  if (!file.has_value()) {
+    return kExitError;
+  }
+
   std::optional<std::ofstream> export_stream;
   if (export_path.has_value()) {
     std::error_code fs_ec;
@@ -255,11 +260,6 @@ int run_trace(int argc, char* argv[], bool use_color) {
       std::cerr << "logloom: cannot open export file '" << export_path->string() << "'\n";
       return kExitError;
     }
-  }
-
-  const auto file = open_input_file(*file_path);
-  if (!file.has_value()) {
-    return kExitError;
   }
 
   logloom::SearchQuery query;

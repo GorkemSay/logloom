@@ -102,11 +102,50 @@ int main(void) {
   TEST_CHECK(!logloom_file_is_indexed(file));
   TEST_CHECK(logloom_file_line_count(file) == 0);
 
-  /* 3. Read before indexing must fail cleanly with LOGLOOM_ERR_NOT_INDEXED */
+  /* 3. Read before indexing must fail cleanly with LOGLOOM_ERR_NOT_INDEXED,
+        while logloom_file_read_head works immediately without an index */
   logloom_line_t line = {0};
   TEST_CHECK(logloom_file_read_line(file, 1, &line) == LOGLOOM_ERR_NOT_INDEXED);
   TEST_CHECK(strlen(logloom_file_last_error(file)) > 0);
   logloom_line_free(&line);
+
+  logloom_line_list_t head = {0};
+  TEST_CHECK(logloom_file_read_head(file, 0, &head) == LOGLOOM_OK);
+  TEST_CHECK(head.count == 0);
+  TEST_CHECK(head.lines == NULL);
+
+  TEST_CHECK(logloom_file_read_head(file, 2, &head) == LOGLOOM_OK);
+  TEST_CHECK(head.count == 2);
+  TEST_CHECK(head.lines[0].line_number == 1);
+  TEST_CHECK(strstr(head.lines[0].content, "req-1") != NULL);
+  TEST_CHECK(head.lines[1].line_number == 2);
+  TEST_CHECK(strcmp(head.lines[1].content, "plain noise line") == 0);
+
+  /* Zero-copy field extraction over head lines */
+  logloom_extracted_fields_t ef = {0};
+  TEST_CHECK(logloom_extract_fields(
+                 head.lines[0].content, head.lines[0].content_length, NULL, NULL, NULL, &ef) ==
+             LOGLOOM_OK);
+  TEST_CHECK(ef.kind == LOGLOOM_LINE_JSON_OBJECT);
+  TEST_CHECK(ef.timestamp_length == 20);
+  TEST_CHECK(strncmp(ef.timestamp, "2026-11-26T10:00:00Z", ef.timestamp_length) == 0);
+  TEST_CHECK(ef.level_length == 4);
+  TEST_CHECK(strncmp(ef.level, "INFO", ef.level_length) == 0);
+  TEST_CHECK(ef.trace_id_length == 5);
+  TEST_CHECK(strncmp(ef.trace_id, "req-1", ef.trace_id_length) == 0);
+  TEST_CHECK(!ef.has_escapes_in_trace_id);
+
+  TEST_CHECK(logloom_extract_fields(
+                 head.lines[1].content, head.lines[1].content_length, NULL, NULL, NULL, &ef) ==
+             LOGLOOM_OK);
+  TEST_CHECK(ef.kind == LOGLOOM_LINE_PLAIN_TEXT);
+  TEST_CHECK(ef.trace_id == NULL);
+  TEST_CHECK(ef.trace_id_length == 0);
+
+  TEST_CHECK(logloom_extract_fields("{broken", 7, NULL, NULL, NULL, &ef) == LOGLOOM_OK);
+  TEST_CHECK(ef.kind == LOGLOOM_LINE_MALFORMED);
+  TEST_CHECK(logloom_extract_fields(NULL, 5, NULL, NULL, NULL, &ef) == LOGLOOM_ERR_INVALID_ARG);
+  logloom_line_list_free(&head);
 
   /* 4. Cancel token + cancelled index build */
   logloom_cancel_token_t* token = logloom_cancel_token_create();

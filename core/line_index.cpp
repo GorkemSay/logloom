@@ -104,6 +104,12 @@ std::optional<LineIndex> LineIndex::build(
         index.stride_ *= 2;
       }
       if (zero_idx % index.stride_ == 0) {
+        if (index.checkpoints_.size() == index.checkpoints_.capacity() &&
+            index.checkpoints_.capacity() < max_checkpoints) {
+          const std::size_t cur_cap = index.checkpoints_.capacity();
+          const std::size_t grown = (cur_cap == 0) ? 1024U : (cur_cap * 2U);
+          index.checkpoints_.reserve(std::min(grown, max_checkpoints));
+        }
         index.checkpoints_.push_back(view.byte_offset);
       }
     }

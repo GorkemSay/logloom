@@ -83,8 +83,10 @@ Measured on **Apple M4** (10 cores, 16 GiB RAM, macOS 27.2.1, `release` preset) 
 `include/logloom/c_api.h` provides an opaque-handle, C11-compatible ABI over `liblogloom.a` for native integrations (such as the planned Phase 2 Swift/macOS desktop app):
 
 - File lifecycle: `logloom_file_open`, `logloom_file_close`, `logloom_file_size`
+- Instant first-screen preview (pre-index): `logloom_file_read_head`
 - Incremental indexing with progress & cancellation: `logloom_file_build_index`, `logloom_cancel_token_*`
 - O(1) indexed line & context fetch: `logloom_file_read_line`, `logloom_file_read_context`
+- Zero-copy JSONL field extraction: `logloom_extract_fields`
 - Streaming parallel search & trace isolation: `logloom_file_search`
 - Thread-safe error retrieval: `logloom_last_error`, `logloom_file_last_error`
 
