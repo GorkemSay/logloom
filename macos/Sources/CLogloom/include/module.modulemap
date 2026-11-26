@@ -1,0 +1,4 @@
+module CLogloom {
+    header "c_api_shim.h"
+    export *
+}

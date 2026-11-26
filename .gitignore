@@ -30,6 +30,8 @@ bench_data/
 *.xcworkspace/xcuserdata/
 DerivedData/
 *.xcuserstate
+macos/.build/
+macos/.swiftpm/
 
 # IDE / Editor
 .vscode/

@@ -51,3 +51,9 @@ jobs:
 
       - name: CLI smoke check
         run: ./build/release/cli/logloom --version
+
+      - name: Build & test macOS SwiftPM package
+        if: runner.os == 'macOS'
+        run: |
+          swift test --package-path macos
+          ./macos/scripts/bundle_app.sh

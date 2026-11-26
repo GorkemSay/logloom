@@ -39,6 +39,16 @@ ctest --preset release --output-on-failure
 ./build/release/cli/logloom --version
 ```
 
+### macOS Desktop App (`macos/`, SwiftPM)
+
+Requires `build/release/core/liblogloom.a` built via the `release` preset above:
+
+```bash
+swift test --package-path macos
+./macos/scripts/bundle_app.sh
+open build/macos/Logloom.app
+```
+
 ## CLI Usage
 
 `logloom` writes matched/requested data to `stdout` and diagnostics/warnings/errors to `stderr`. ANSI styling is disabled automatically when piped or when `NO_COLOR` is set.

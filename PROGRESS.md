@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 2 — Native macOS Desktop App
-- **Next Step:** `Step 2.1 — macOS App Skeleton & liblogloom C-ABI Bridge`
-- **Last Completed Step:** `Step 1.9 — Stable C ABI (c_api.h) & Phase 1 Release (v0.1.0)`
+- **Next Step:** `Step 2.2 — Virtualized Log Viewport (NSTableView)`
+- **Last Completed Step:** `Step 2.1 — macOS App Skeleton & liblogloom C-ABI Bridge`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -26,7 +26,7 @@
 - [x] **Step 1.9** — Stable C ABI (`c_api.h`) & Phase 1 Release (`v0.1.0`)
 
 ### Phase 2 — Native macOS Desktop App
-- [ ] **Step 2.1** — macOS App Skeleton & `liblogloom` C-ABI Bridge
+- [x] **Step 2.1** — macOS App Skeleton & `liblogloom` C-ABI Bridge
 - [ ] **Step 2.2** — Virtualized Log Viewport (`NSTableView`)
 - [ ] **Step 2.3** — Interactive Trace Isolation & Live Search
 - [ ] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
@@ -190,6 +190,21 @@
   - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `32/32` tests (`3.33 sec`).
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `32/32` tests (`1.06 sec`).
 - **Next:** Execute **Step 2.1** (macOS App Skeleton & `liblogloom` C-ABI Bridge via SwiftPM).
+
+### 2026-11-26 — Step 2.1: macOS App Skeleton & `liblogloom` C-ABI Bridge
+- **Files Touched:** `CMakeLists.txt`, `.gitignore`, `.github/workflows/ci.yml`, `README.md`, `PROGRESS.md`, `macos/Package.swift`, `macos/Sources/CLogloom/*`, `macos/Sources/LogloomCore/*`, `macos/Sources/LogloomApp/*`, `macos/Resources/Info.plist`, `macos/Resources/Logloom.entitlements`, `macos/scripts/bundle_app.sh`, `macos/Tests/LogloomCoreTests/LogloomCoreTests.swift`.
+- **Summary:**
+  - Created SwiftPM package (`macos/Package.swift`, macOS 14+) exposing `CLogloom` (`c_api.h` bridge), `LogloomCore` (`LogFile`, `CancelToken`, `LogLine`, `LogloomError` RAII Swift wrappers), and `LogloomApp` (SwiftUI/AppKit skeleton with `NSOpenPanel`, Finder file-open delegate, drag-and-drop, security-scoped resource guard, and initial pre-index `readHead` preview).
+  - Added App Sandbox entitlements (`com.apple.security.app-sandbox`, `files.user-selected.read-only`, `files.bookmarks.app-scope`), `Info.plist`, and `macos/scripts/bundle_app.sh` producing signed `build/macos/Logloom.app`.
+  - Set `CMAKE_OSX_DEPLOYMENT_TARGET=14.0` on Apple so `liblogloom.a` links cleanly with SwiftPM without deployment-target warnings; updated macOS CI job.
+- **Key Decisions / Trade-offs:**
+  - Used SwiftPM + a reproducible `.app` bundle/signing script instead of `.xcodeproj`, avoiding brittle `.pbxproj` maintenance while still enforcing App Sandbox entitlements via `codesign`.
+- **Verification:**
+  - `debug-asan` (`32/32` C/C++ tests) & `release` (`32/32` C/C++ tests) built and passed with 0 warnings.
+  - `swift test --package-path macos` (`3/3` `LogloomCoreTests`) passed with 0 warnings.
+  - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` (`codesign --verify` passed, App Sandbox entitlements verified).
+- **Next:** Execute **Step 2.2** (Virtualized Log Viewport via `NSTableView`).
+- **Spec Drift / Follow-ups:** None.
 
 <!--
 Entry template for subsequent steps:
