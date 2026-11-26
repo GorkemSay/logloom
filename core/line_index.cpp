@@ -54,7 +54,9 @@ IndexedLine to_indexed_line(const LineView& view, std::uint64_t line_number) {
 std::optional<LineIndex> LineIndex::build(
     const PosixFile& file,
     std::error_code& ec,
-    LineIndexOptions options) {
+    LineIndexOptions options,
+    const IndexProgressCallback& progress_cb,
+    const std::atomic<bool>* cancel_flag) {
   ec.clear();
 
   if (!file.is_open()) {
@@ -62,6 +64,12 @@ std::optional<LineIndex> LineIndex::build(
     return std::nullopt;
   }
 
+  if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) {
+    ec = std::make_error_code(std::errc::operation_canceled);
+    return std::nullopt;
+  }
+
+  const std::uint64_t total_bytes = file.size();
   const std::size_t max_checkpoints =
       std::max<std::size_t>(options.max_memory_bytes / sizeof(std::uint64_t), 2);
 
@@ -80,6 +88,11 @@ std::optional<LineIndex> LineIndex::build(
 
   LineView view{};
   while (reader.next_line(view, ec)) {
+    if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) {
+      ec = std::make_error_code(std::errc::operation_canceled);
+      return std::nullopt;
+    }
+
     const std::uint64_t zero_idx = view.line_number - 1;
     if (zero_idx % index.stride_ == 0) {
       if (index.checkpoints_.size() >= max_checkpoints) {
@@ -94,6 +107,14 @@ std::optional<LineIndex> LineIndex::build(
         index.checkpoints_.push_back(view.byte_offset);
       }
     }
+
+    if (progress_cb && (view.line_number % 4096ULL) == 0ULL) {
+      const std::uint64_t processed = std::min(reader.stats().bytes_read, total_bytes);
+      if (!progress_cb(processed, total_bytes, view.line_number)) {
+        ec = std::make_error_code(std::errc::operation_canceled);
+        return std::nullopt;
+      }
+    }
   }
 
   if (ec) {
@@ -101,6 +122,12 @@ std::optional<LineIndex> LineIndex::build(
   }
 
   index.stats_ = reader.stats();
+  if (progress_cb &&
+      !progress_cb(total_bytes, total_bytes, index.stats_.total_lines)) {
+    ec = std::make_error_code(std::errc::operation_canceled);
+    return std::nullopt;
+  }
+
   return index;
 }
 

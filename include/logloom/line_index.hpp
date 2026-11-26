@@ -3,8 +3,10 @@
 #include "logloom/line_reader.hpp"
 #include "logloom/posix_file.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -32,13 +34,20 @@ struct IndexedLine {
   bool exceeds_max_length = false;
 };
 
+using IndexProgressCallback = std::function<bool(
+    std::uint64_t bytes_processed,
+    std::uint64_t total_bytes,
+    std::uint64_t lines_indexed)>;
+
 /// Adaptive byte-offset line index supporting O(1) seek random line & context reads.
 class LineIndex {
 public:
   [[nodiscard]] static std::optional<LineIndex> build(
       const PosixFile& file,
       std::error_code& ec,
-      LineIndexOptions options = {});
+      LineIndexOptions options = {},
+      const IndexProgressCallback& progress_cb = {},
+      const std::atomic<bool>* cancel_flag = nullptr);
 
   [[nodiscard]] std::uint64_t line_count() const noexcept;
   [[nodiscard]] std::uint64_t stride() const noexcept;

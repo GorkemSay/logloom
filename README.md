@@ -78,6 +78,16 @@ Measured on **Apple M4** (10 cores, 16 GiB RAM, macOS 27.2.1, `release` preset) 
 | 5 GiB (`27.51M` lines) | `mmap-parallel` | `5,611–6,153 ms` | `832–913 MiB/s` | `3,895–3,914 MiB` |
 | 5 GiB (`27.51M` lines) | `LineIndex::build` | `1,600–1,794 ms` | `2,854–3,201 MiB/s` | `31.69–33.30 MiB` (`13.12 MiB` index) |
 
+## C ABI (`liblogloom`)
+
+`include/logloom/c_api.h` provides an opaque-handle, C11-compatible ABI over `liblogloom.a` for native integrations (such as the planned Phase 2 Swift/macOS desktop app):
+
+- File lifecycle: `logloom_file_open`, `logloom_file_close`, `logloom_file_size`
+- Incremental indexing with progress & cancellation: `logloom_file_build_index`, `logloom_cancel_token_*`
+- O(1) indexed line & context fetch: `logloom_file_read_line`, `logloom_file_read_context`
+- Streaming parallel search & trace isolation: `logloom_file_search`
+- Thread-safe error retrieval: `logloom_last_error`, `logloom_file_last_error`
+
 ## Project Documentation
 
 - [SPEC.md](./SPEC.md) — Engineering specification and step-by-step roadmap

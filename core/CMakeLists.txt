@@ -1,4 +1,5 @@
 add_library(logloom_core STATIC
+  c_api.cpp
   jsonl_extractor.cpp
   line_index.cpp
   line_reader.cpp

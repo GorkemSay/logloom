@@ -25,3 +25,15 @@ target_link_libraries(logloom_tests
 
 include(Catch)
 catch_discover_tests(logloom_tests)
+
+add_executable(logloom_c_api_test
+  c_api_test.c
+)
+
+target_link_libraries(logloom_c_api_test
+  PRIVATE
+    logloom::core
+    logloom_warnings
+)
+
+add_test(NAME logloom_c_api_test COMMAND logloom_c_api_test)

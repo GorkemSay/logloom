@@ -5,9 +5,9 @@
 
 ## Current Status
 
-- **Active Phase:** Phase 1 — C++20 Core Engine & CLI
-- **Next Step:** `Step 1.9 — Stable C ABI (c_api.h) & Phase 1 Release (v0.1.0)`
-- **Last Completed Step:** `Step 1.8 — Deterministic Log Generator & pread vs mmap Benchmarks`
+- **Active Phase:** Phase 2 — Native macOS Desktop App
+- **Next Step:** `Step 2.1 — macOS App Skeleton & liblogloom C-ABI Bridge`
+- **Last Completed Step:** `Step 1.9 — Stable C ABI (c_api.h) & Phase 1 Release (v0.1.0)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -23,7 +23,7 @@
 - [x] **Step 1.6** — Multithreaded Chunked Search Engine
 - [x] **Step 1.7** — `logloom` CLI Tool & Trace Export
 - [x] **Step 1.8** — Deterministic Log Generator & `pread` vs `mmap` Benchmarks
-- [ ] **Step 1.9** — Stable C ABI (`c_api.h`) & Phase 1 Release (`v0.1.0`)
+- [x] **Step 1.9** — Stable C ABI (`c_api.h`) & Phase 1 Release (`v0.1.0`)
 
 ### Phase 2 — Native macOS Desktop App
 - [ ] **Step 2.1** — macOS App Skeleton & `liblogloom` C-ABI Bridge
@@ -163,6 +163,22 @@
   - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `31/31` tests (`0.85 sec`).
 - **Next:** Execute **Step 1.9** (Stable C ABI `c_api.h` & Phase 1 Release `v0.1.0`).
 - **Spec Drift / Follow-ups:** None. Metric 4 (UI scroll hitch rate) is deferred to Phase 2 / Step 2.5 per `SPEC.md`.
+
+### 2026-11-26 — Step 1.9: Stable C ABI (`c_api.h`) & Phase 1 Release (`v0.1.0`)
+- **Files Touched:** `CMakeLists.txt`, `include/logloom/line_index.hpp`, `core/line_index.cpp`, `include/logloom/c_api.h`, `core/c_api.cpp`, `core/CMakeLists.txt`, `tests/c_api_test.c`, `tests/CMakeLists.txt`, `README.md`, `PROGRESS.md`.
+- **Summary:**
+  - Extended `LineIndex::build` with optional `IndexProgressCallback` and `std::atomic<bool>` cancellation.
+  - Designed and implemented the C11-compatible opaque-handle C ABI (`include/logloom/c_api.h`, `core/c_api.cpp`) covering file open/close/size, incremental indexing with progress & cancellation, O(1) line & context retrieval, streaming parallel search/trace, and thread-safe error strings.
+  - Added pure-C11 caller test suite (`tests/c_api_test.c`) exercising full handle lifecycle, error paths, cancellation, and zero memory leaks under ASan/UBSan.
+  - Audited `README.md` and `PROGRESS.md` for Phase 1 `v0.1.0` completion and tagged `v0.1.0`.
+- **Key Decisions / Trade-offs:**
+  - Guarded every `extern "C"` entrypoint with `try/catch` and duplicated NUL-terminated scratch strings before invoking `logloom_match_cb` so both C and upcoming Phase 2 Swift callers can safely use either C-string APIs or `(ptr, length)` slices.
+  - Replaced `assert(...)` with a release-active `TEST_CHECK(...)` macro in `tests/c_api_test.c` so `-DNDEBUG` release builds still execute every C-ABI assertion cleanly under `-Werror`.
+- **Verification:**
+  - `debug-asan` (`AppleClang 21.0.0`, ASan + UBSan): built with 0 warnings; `ctest --preset debug-asan --output-on-failure` passed `32/32` tests (`3.20 sec`).
+  - `release` (`-O3 -DNDEBUG`): built with 0 warnings; `ctest --preset release --output-on-failure` passed `32/32` tests (`1.13 sec`).
+- **Next:** Execute **Step 2.1** (macOS App Skeleton & `liblogloom` C-ABI Bridge via SwiftPM).
+- **Spec Drift / Follow-ups:** None. Phase 1 complete and tagged `v0.1.0`.
 
 <!--
 Entry template for subsequent steps:
