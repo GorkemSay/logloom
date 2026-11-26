@@ -144,4 +144,87 @@ final class LogloomCoreTests: XCTestCase {
         XCTAssertEqual(cache.line(atRow: 119)?.lineNumber, 120)
         XCTAssertEqual(cache.cachedPageCount, 3)
     }
+
+    func testViewportStoreFullAndFilteredModes() throws {
+        var rows: [String] = []
+        rows.reserveCapacity(30)
+        for i in 1...30 {
+            let level = (i % 5 == 0) ? "ERROR" : "INFO"
+            let trace = (i % 3 == 0) ? "req-alpha" : "req-beta"
+            rows.append("{\"timestamp\":\"2026-11-26T10:00:\(String(format: "%02d", i % 60))Z\",\"level\":\"\(level)\",\"request_id\":\"\(trace)\",\"msg\":\"event \(i)\"}")
+        }
+        let url = try makeFixture(rows.joined(separator: "\n") + "\n")
+        let file = try LogFile(path: url.path)
+        let head = try file.readHead(maxLines: 5)
+
+        let store = ViewportStore(pageCache: LinePageCache(pageSize: 10, maxCachedPages: 4))
+        store.configureFile(file, headLines: head)
+        XCTAssertEqual(store.mode, .fullFile)
+        XCTAssertEqual(store.rowCount, 5)
+        XCTAssertEqual(store.rowIndex(forLineNumber: 4), 3)
+        XCTAssertNil(store.rowIndex(forLineNumber: 10))
+
+        _ = try file.buildIndex()
+        store.pageCache.clearCache()
+        XCTAssertEqual(store.rowCount, 30)
+        XCTAssertEqual(store.rowIndex(forLineNumber: 25), 24)
+
+        var matches: [SearchMatch] = []
+        _ = try file.search(SearchQuery(traceID: "req-alpha")) { match in
+            matches.append(match)
+            return true
+        }
+        store.beginFilteredMode()
+        store.appendFilteredMatches(matches)
+
+        XCTAssertEqual(store.mode, .filtered)
+        XCTAssertEqual(store.rowCount, 10)
+        XCTAssertEqual(store.line(atRow: 0)?.lineNumber, 3)
+        XCTAssertEqual(store.line(atRow: 9)?.lineNumber, 30)
+        XCTAssertEqual(store.rowIndex(forLineNumber: 15), 4)
+        XCTAssertNil(store.rowIndex(forLineNumber: 14))
+        XCTAssertNil(store.rowIndex(forLineNumber: 0))
+
+        store.setFullFileMode()
+        XCTAssertEqual(store.mode, .fullFile)
+        XCTAssertEqual(store.rowCount, 30)
+        XCTAssertEqual(store.rowIndex(forLineNumber: 15), 14)
+    }
+
+    func testTraceIsolationAndInvalidRegex() throws {
+        let payload = """
+        {"timestamp":"2026-11-26T10:00:00Z","level":"INFO","request_id":"tr-1","msg":"Alpha start"}
+        {"timestamp":"2026-11-26T10:00:01Z","level":"INFO","request_id":"tr-2","msg":"Other trace"}
+        {"timestamp":"2026-11-26T10:00:02Z","level":"ERROR","request_id":"tr-1","msg":"TIMEOUT waiting db"}
+        {"timestamp":"2026-11-26T10:00:03Z","level":"WARN","request_id":"tr-1","msg":"Timeout retry"}
+        """
+        let url = try makeFixture(payload)
+        let file = try LogFile(path: url.path)
+
+        var traceMatches: [SearchMatch] = []
+        let stats = try file.search(SearchQuery(traceID: "tr-1")) { match in
+            traceMatches.append(match)
+            return true
+        }
+        XCTAssertEqual(stats.matchesFound, 3)
+        XCTAssertEqual(traceMatches.map(\.lineNumber), [1, 3, 4])
+
+        var filteredMatches: [SearchMatch] = []
+        _ = try file.search(
+            SearchQuery(traceID: "tr-1", level: "ERROR", textQuery: "timeout", caseSensitive: false)
+        ) { match in
+            filteredMatches.append(match)
+            return true
+        }
+        XCTAssertEqual(filteredMatches.map(\.lineNumber), [3])
+
+        XCTAssertThrowsError(
+            try file.search(SearchQuery(textQuery: "[unclosed", isRegex: true))
+        ) { err in
+            guard case LogloomError.invalidRegex = err else {
+                XCTFail("Expected invalidRegex, got \(err)")
+                return
+            }
+        }
+    }
 }

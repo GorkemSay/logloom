@@ -3,12 +3,21 @@ import LogloomCore
 import SwiftUI
 
 struct VirtualizedLogTableView: NSViewRepresentable {
-    let lineCache: LinePageCache
+    let viewportStore: ViewportStore
     let viewportRevision: UInt64
+    let isolatedTraceID: String?
     @Binding var selectedLineNumber: UInt64?
+    let onTraceIDClick: (String) -> Void
+    let onClearTraceIsolation: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(lineCache: lineCache, selectedLineNumber: $selectedLineNumber)
+        Coordinator(
+            viewportStore: viewportStore,
+            isolatedTraceID: isolatedTraceID,
+            selectedLineNumber: $selectedLineNumber,
+            onTraceIDClick: onTraceIDClick,
+            onClearTraceIsolation: onClearTraceIsolation
+        )
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -47,11 +56,18 @@ struct VirtualizedLogTableView: NSViewRepresentable {
 
         tableView.delegate = context.coordinator
         tableView.dataSource = context.coordinator
+        tableView.target = context.coordinator
+        tableView.action = #selector(Coordinator.handleTableClick(_:))
+
+        let menu = NSMenu()
+        menu.delegate = context.coordinator
+        tableView.menu = menu
 
         scrollView.documentView = tableView
         context.coordinator.tableView = tableView
         context.coordinator.scrollView = scrollView
         context.coordinator.lastRevision = viewportRevision
+        context.coordinator.lastMode = viewportStore.mode
 
         return scrollView
     }
@@ -59,26 +75,38 @@ struct VirtualizedLogTableView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.selectedLineNumberBinding = $selectedLineNumber
-        coordinator.lineCache = lineCache
+        coordinator.viewportStore = viewportStore
+        coordinator.isolatedTraceID = isolatedTraceID
+        coordinator.onTraceIDClick = onTraceIDClick
+        coordinator.onClearTraceIsolation = onClearTraceIsolation
 
         guard let tableView = coordinator.tableView else { return }
 
         if coordinator.lastRevision != viewportRevision {
+            let modeChanged = coordinator.lastMode != viewportStore.mode
             coordinator.lastRevision = viewportRevision
+            coordinator.lastMode = viewportStore.mode
+
             let previousOrigin = scrollView.contentView.bounds.origin
             let savedSelection = selectedLineNumber
 
             coordinator.isProgrammaticUpdate = true
             tableView.reloadData()
 
-            if let savedSelection, savedSelection > 0 {
-                let targetRow = Int(clamping: savedSelection - 1)
-                if targetRow >= 0 && targetRow < lineCache.rowCount {
-                    tableView.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
-                }
+            var restoredRow: Int?
+            if let savedSelection, let targetRow = viewportStore.rowIndex(forLineNumber: savedSelection) {
+                tableView.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+                restoredRow = targetRow
             }
 
-            if previousOrigin.y > 0 || previousOrigin.x > 0 {
+            if modeChanged {
+                if let restoredRow {
+                    tableView.scrollRowToVisible(restoredRow)
+                } else {
+                    scrollView.contentView.scroll(to: .zero)
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+            } else if previousOrigin.y > 0 || previousOrigin.x > 0 {
                 let contentHeight = tableView.bounds.height
                 let clipHeight = scrollView.contentView.bounds.height
                 let maxY = max(0, contentHeight - clipHeight)
@@ -95,9 +123,8 @@ struct VirtualizedLogTableView: NSViewRepresentable {
 
     private func syncExternalSelection(tableView: NSTableView, coordinator: Coordinator) {
         let desiredRow: Int?
-        if let selectedLineNumber, selectedLineNumber > 0 {
-            let row = Int(clamping: selectedLineNumber - 1)
-            desiredRow = row < lineCache.rowCount ? row : nil
+        if let selectedLineNumber {
+            desiredRow = viewportStore.rowIndex(forLineNumber: selectedLineNumber)
         } else {
             desiredRow = nil
         }
@@ -195,25 +222,38 @@ struct VirtualizedLogTableView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-        var lineCache: LinePageCache
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+        var viewportStore: ViewportStore
+        var isolatedTraceID: String?
         var selectedLineNumberBinding: Binding<UInt64?>
+        var onTraceIDClick: (String) -> Void
+        var onClearTraceIsolation: () -> Void
         weak var tableView: NSTableView?
         weak var scrollView: NSScrollView?
         var lastRevision: UInt64 = 0
+        var lastMode: ViewportMode = .fullFile
         var isProgrammaticUpdate = false
 
         private let lineNumberFont = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
         private let monoRegularFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         private let monoMediumFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
 
-        init(lineCache: LinePageCache, selectedLineNumber: Binding<UInt64?>) {
-            self.lineCache = lineCache
+        init(
+            viewportStore: ViewportStore,
+            isolatedTraceID: String?,
+            selectedLineNumber: Binding<UInt64?>,
+            onTraceIDClick: @escaping (String) -> Void,
+            onClearTraceIsolation: @escaping () -> Void
+        ) {
+            self.viewportStore = viewportStore
+            self.isolatedTraceID = isolatedTraceID
             self.selectedLineNumberBinding = selectedLineNumber
+            self.onTraceIDClick = onTraceIDClick
+            self.onClearTraceIsolation = onClearTraceIsolation
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
-            lineCache.rowCount
+            viewportStore.rowCount
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -226,7 +266,7 @@ struct VirtualizedLogTableView: NSViewRepresentable {
                 return cellView
             }
 
-            guard let line = lineCache.line(atRow: row) else {
+            guard let line = viewportStore.line(atRow: row) else {
                 textField.stringValue = ""
                 return cellView
             }
@@ -250,8 +290,13 @@ struct VirtualizedLogTableView: NSViewRepresentable {
 
             case .traceID:
                 textField.font = monoRegularFont
-                textField.textColor = .secondaryLabelColor
-                textField.stringValue = line.fields.traceID ?? ""
+                let traceText = line.fields.traceID ?? ""
+                textField.stringValue = traceText
+                if !traceText.isEmpty {
+                    textField.textColor = (traceText == isolatedTraceID) ? .controlAccentColor : .linkColor
+                } else {
+                    textField.textColor = .secondaryLabelColor
+                }
 
             case .content:
                 textField.font = monoRegularFont
@@ -270,11 +315,65 @@ struct VirtualizedLogTableView: NSViewRepresentable {
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !isProgrammaticUpdate, let tableView else { return }
             let row = tableView.selectedRow
-            if row >= 0, let line = lineCache.line(atRow: row) {
+            if row >= 0, let line = viewportStore.line(atRow: row) {
                 selectedLineNumberBinding.wrappedValue = line.lineNumber
             } else {
                 selectedLineNumberBinding.wrappedValue = nil
             }
+        }
+
+        @objc func handleTableClick(_ sender: NSTableView) {
+            let row = sender.clickedRow
+            let col = sender.clickedColumn
+            guard row >= 0, col >= 0, col < sender.tableColumns.count else { return }
+            guard sender.tableColumns[col].identifier == ColumnSpec.traceID.identifier else { return }
+            guard let line = viewportStore.line(atRow: row),
+                let traceID = line.fields.traceID,
+                !traceID.isEmpty
+            else {
+                return
+            }
+            onTraceIDClick(traceID)
+        }
+
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+            guard let tableView else { return }
+            let targetRow = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+
+            if targetRow >= 0,
+                let line = viewportStore.line(atRow: targetRow),
+                let traceID = line.fields.traceID,
+                !traceID.isEmpty
+            {
+                let item = NSMenuItem(
+                    title: "Isolate Trace \"\(traceID)\"",
+                    action: #selector(handleIsolateTraceMenuItem(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = traceID
+                menu.addItem(item)
+            }
+
+            if isolatedTraceID != nil {
+                let clearItem = NSMenuItem(
+                    title: "Clear Trace Isolation",
+                    action: #selector(handleClearTraceMenuItem(_:)),
+                    keyEquivalent: ""
+                )
+                clearItem.target = self
+                menu.addItem(clearItem)
+            }
+        }
+
+        @objc private func handleIsolateTraceMenuItem(_ sender: NSMenuItem) {
+            guard let traceID = sender.representedObject as? String, !traceID.isEmpty else { return }
+            onTraceIDClick(traceID)
+        }
+
+        @objc private func handleClearTraceMenuItem(_ sender: NSMenuItem) {
+            onClearTraceIsolation()
         }
 
         private func reusableCellView(in tableView: NSTableView, columnSpec: ColumnSpec) -> NSTableCellView {

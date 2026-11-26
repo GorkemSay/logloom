@@ -55,6 +55,13 @@ struct LogloomDesktopApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
+            CommandGroup(after: .textEditing) {
+                Button("Find...") {
+                    model.requestSearchFocus()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(!model.hasOpenFile)
+            }
         }
     }
 }

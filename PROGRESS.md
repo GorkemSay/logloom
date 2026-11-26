@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 2 — Native macOS Desktop App
-- **Next Step:** `Step 2.3 — Interactive Trace Isolation & Live Search`
-- **Last Completed Step:** `Step 2.2 — Virtualized Log Viewport (NSTableView)`
+- **Next Step:** `Step 2.4 — Line Inspector, Keyboard Navigation & Export`
+- **Last Completed Step:** `Step 2.3 — Interactive Trace Isolation & Live Search`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -28,7 +28,7 @@
 ### Phase 2 — Native macOS Desktop App
 - [x] **Step 2.1** — macOS App Skeleton & `liblogloom` C-ABI Bridge
 - [x] **Step 2.2** — Virtualized Log Viewport (`NSTableView`)
-- [ ] **Step 2.3** — Interactive Trace Isolation & Live Search
+- [x] **Step 2.3** — Interactive Trace Isolation & Live Search
 - [ ] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
 - [ ] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
 
@@ -220,6 +220,23 @@
   - `swift test --package-path macos` (`4/4` `LogloomCoreTests`, including `testLinePageCachePreIndexAndBoundedLRUEviction`) passed with 0 warnings.
   - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` cleanly.
 - **Next:** Execute **Step 2.3** (Interactive Trace Isolation & Live Search).
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-26 — Step 2.3: Interactive Trace Isolation & Live Search
+- **Files Touched:** `macos/Sources/LogloomCore/LogLine.swift`, `macos/Sources/LogloomCore/ViewportStore.swift`, `macos/Sources/LogloomApp/AppModel.swift`, `macos/Sources/LogloomApp/VirtualizedLogTableView.swift`, `macos/Sources/LogloomApp/ContentView.swift`, `macos/Sources/LogloomApp/LogloomApp.swift`, `macos/Tests/LogloomCoreTests/LogloomCoreTests.swift`, `PROGRESS.md`.
+- **Summary:**
+  - Added `ViewportStore` seamlessly switching between `LinePageCache` (`.fullFile` mode) and streamed query matches (`.filtered` mode), with binary-search `rowIndex(forLineNumber:)` selection mapping across modes.
+  - Updated `AppModel` for non-blocking live search (`120 ms` debounce + cancel-on-type via `CancelToken`, `searchGeneration` staleness guards, batched streaming flushes up to `100,000` matches, level filtering, case-sensitivity, regex mode, and `isolateTrace`/`clearTraceIsolation`).
+  - Updated `VirtualizedLogTableView` with clickable link-styled `Trace ID` cells, context-menu actions (`Isolate Trace` / `Clear Trace Isolation`), and mode-switch selection scrolling (jumping back to the selected line when exiting trace isolation).
+  - Updated `LogloomApp` and `ContentView` with `⌘F` focus shortcut, `Esc` clear/exit command, search/filter bar (`Aa`, `.*`, level picker), match counter/timing badge, regex error banner, and trace isolation header strip.
+- **Key Decisions / Trade-offs:**
+  - Batched streaming matches on the background worker thread (`200` matches or `50 ms` cadence) before dispatching to `@MainActor` so high-volume queries update incrementally without flooding SwiftUI/AppKit table reloads.
+  - Applied an interactive cap of `100,000` filtered matches in UI memory while leaving `fullFile` mode backed by bounded LRU `LinePageCache`.
+- **Verification:**
+  - `debug-asan` (`32/32` C/C++ tests) & `release` (`32/32` C/C++ tests) passed with 0 warnings.
+  - `swift test --package-path macos` (`6/6` `LogloomCoreTests`, including `testViewportStoreFullAndFilteredModes` and `testTraceIsolationAndInvalidRegex`) passed with 0 warnings.
+  - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` cleanly.
+- **Next:** Execute **Step 2.4** (Line Inspector, Keyboard Navigation & Export).
 - **Spec Drift / Follow-ups:** None.
 
 <!--

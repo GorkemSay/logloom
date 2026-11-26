@@ -51,6 +51,26 @@ public struct LogLine: Identifiable, Sendable, Equatable {
     public let isTruncatedEOF: Bool
     public let exceedsMaxLength: Bool
     public let fields: ExtractedFields
+
+    public init(
+        lineNumber: UInt64,
+        byteOffset: UInt64,
+        byteLength: UInt64,
+        content: String,
+        hasCRLF: Bool,
+        isTruncatedEOF: Bool,
+        exceedsMaxLength: Bool,
+        fields: ExtractedFields
+    ) {
+        self.lineNumber = lineNumber
+        self.byteOffset = byteOffset
+        self.byteLength = byteLength
+        self.content = content
+        self.hasCRLF = hasCRLF
+        self.isTruncatedEOF = isTruncatedEOF
+        self.exceedsMaxLength = exceedsMaxLength
+        self.fields = fields
+    }
 }
 
 public struct IndexStats: Sendable, Equatable {
