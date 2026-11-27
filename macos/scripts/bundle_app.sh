@@ -25,6 +25,25 @@ mkdir -p "${APP_BUNDLE}/Contents/MacOS" "${APP_BUNDLE}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/LogloomApp"
 cp "${MACOS_DIR}/Resources/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
 
+APPICON_SRC="${MACOS_DIR}/Resources/AppIcon.appiconset"
+if [[ -d "${APPICON_SRC}" ]]; then
+  ICONSET_TMP="$(mktemp -d)"
+  ICONSET_DIR="${ICONSET_TMP}/AppIcon.iconset"
+  mkdir -p "${ICONSET_DIR}"
+  cp "${APPICON_SRC}/icon-16@1x.png" "${ICONSET_DIR}/icon_16x16.png"
+  cp "${APPICON_SRC}/icon-16@2x.png" "${ICONSET_DIR}/icon_16x16@2x.png"
+  cp "${APPICON_SRC}/icon-32@1x.png" "${ICONSET_DIR}/icon_32x32.png"
+  cp "${APPICON_SRC}/icon-32@2x.png" "${ICONSET_DIR}/icon_32x32@2x.png"
+  cp "${APPICON_SRC}/icon-128@1x.png" "${ICONSET_DIR}/icon_128x128.png"
+  cp "${APPICON_SRC}/icon-128@2x.png" "${ICONSET_DIR}/icon_128x128@2x.png"
+  cp "${APPICON_SRC}/icon-256@1x.png" "${ICONSET_DIR}/icon_256x256.png"
+  cp "${APPICON_SRC}/icon-256@2x.png" "${ICONSET_DIR}/icon_256x256@2x.png"
+  cp "${APPICON_SRC}/icon-512@1x.png" "${ICONSET_DIR}/icon_512x512.png"
+  cp "${APPICON_SRC}/icon-512@2x.png" "${ICONSET_DIR}/icon_512x512@2x.png"
+  iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+  rm -rf "${ICONSET_TMP}"
+fi
+
 echo "Signing Logloom.app with App Sandbox entitlements (identity: ${SIGN_IDENTITY})..."
 codesign --force --sign "${SIGN_IDENTITY}" \
   --entitlements "${MACOS_DIR}/Resources/Logloom.entitlements" \

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">Logloom</title>
+  <defs>
+    <linearGradient id="midnight" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#101329"/>
+      <stop offset="1" stop-color="#080A1C"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#midnight)"/>
+  <g fill="#F5E9D4">
+    <path id="outer" d="M174 170 H240 V652 A126 126 0 0 0 366 778 H850 V844 H366 A192 192 0 0 1 174 652 Z"/>
+    <path id="inner" d="M374 170 H440 V552 A34 34 0 0 0 474 586 H676 V652 H474 A100 100 0 0 1 374 552 Z"/>
+  </g>
+  <path id="trace" fill="#FF501F" d="M274 170 H340 V598 A86 86 0 0 0 426 684 H776 L710 750 H426 A152 152 0 0 1 274 598 Z"/>
+</svg>

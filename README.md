@@ -1,4 +1,8 @@
-# Logloom
+<p align="center">
+  <img src="assets/Logloom.svg" alt="Logloom Logo" width="120" />
+</p>
+
+<h1 align="center">Logloom</h1>
 
 High-performance, local-first log and JSONL trace inspector built on a C++20 core engine (`liblogloom`) with a CLI and a native macOS SwiftUI + AppKit desktop application (`v1.0.0`).
 
