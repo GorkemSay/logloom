@@ -32,7 +32,7 @@ cmake --build --preset release
 1. **Metric 1 — Initial Index Build (`LineIndex::build`):** Single-pass offset indexing with 16 MiB checkpoint budget.
 2. **Metric 2 — Time to First Match (TTFM) & Full Scan Throughput (`MiB/s`):** Measured from query start to first `on_match` callback and total scan completion.
 3. **Metric 3 — Peak Memory Usage (Peak RSS):** Measured via `ru_maxrss` in isolated subprocesses.
-4. **Metric 4 — UI Scroll Hitch / Frame Drop Rate:** *(Deferred to Phase 2 / Step 2.5 macOS desktop app).*
+4. **Metric 4 — UI Scroll Hitch / Frame Drop Rate:** Verified via Apple Instruments (`xctrace` `Time Profiler` and `Animation Hitches`) in the [macOS Desktop App Profiling](#macos-desktop-app-profiling-instruments--xctrace) section below.
 
 ---
 
@@ -89,3 +89,36 @@ Reproducible measurement script: [`./macos/scripts/profile_app.sh`](./macos/scri
 | `1 GiB` (`5,502,862` lines) | `Time Profiler` (`6s` launch + background index) | `222` samples / `0` potential hangs | Instant `500`-line head render + background `LineIndex` build |
 | `1 GiB` (`5,502,862` lines) | `Animation Hitches` (`5s` launch) | `2` cold-launch hitches | Initial AppKit/SwiftUI window creation only |
 | `1 GiB` (`5,502,862` lines) | Peak RSS (`24` samples across `6s`) | `96.45 MiB` (`98,768 KiB`) | Bounded `LinePageCache` (`32 × 256` rows) + strided index |
+
+---
+
+## Real-World Dataset Benchmark (`Loghub Android_v1`)
+
+To complement synthetic JSONL tests, Logloom was benchmarked against the real-world **Android_v1** framework log from [logpai/loghub](https://github.com/logpai/loghub) ([Zenodo archive](https://zenodo.org/records/8196385/files/Android_v1.zip?download=1)):
+
+- **Dataset:** `Android.log` — `192,270,829` bytes (`183.36 MiB`), `1,555,005` plain-text lines (`0` malformed/oversized)
+- **Queries tested:**
+  - Substring benchmark via `logloom-bench --query "ActivityManager"` (`67,983` matches)
+  - Regex CLI search via `logloom search --query "Exception|Error|FATAL" --regex`
+
+| Mode | Pass 1 Duration | Pass 2 Duration | Throughput | Peak RSS | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `index` (`LineIndex::build`) | `39.55 ms` | `39.43 ms` | `4,636.70–4,650.50 MiB/s` | `29.91 MiB` | `stride=1`, `index_mem=11.86 MiB` |
+| `pread-parallel` (`ActivityManager`) | `13.88 ms` | `12.46 ms` | `13,214.37–14,718.26 MiB/s` | `13.08–13.38 MiB` | `67,983` matches, TTFM `3.07–4.27 ms` |
+| `mmap-parallel` (`ActivityManager`) | `14.21 ms` | `14.16 ms` | `12,903.36–12,953.50 MiB/s` | `193.42–194.03 MiB` | `67,983` matches, TTFM `3.13–3.20 ms` |
+| `logloom search --regex --limit 100` | `810 ms` | — | — | `6.73 MiB` | First 100 matches for `Exception\|Error\|FATAL` |
+| `logloom search --regex` (full scan) | `4,130 ms` | — | — | `10.81 MiB` | Full-file regex scan (`std::regex`) |
+| `Logloom.app` (`open` + full index) | `< 1s` usable | — | — | `157.78 MiB` (`161,568 KiB`) | Sampled over `4s` (`ps -o rss=`), 2-column plain-text mode |
+
+### Reproduce on `Android_v1`
+
+```bash
+mkdir -p /tmp/loghub_android && cd /tmp/loghub_android
+curl -fL "https://zenodo.org/records/8196385/files/Android_v1.zip?download=1" -o Android_v1.zip
+unzip Android_v1.zip
+
+/path/to/logloom/build/release/cli/logloom stats Android.log
+/path/to/logloom/build/release/tools/logloom-bench --file Android.log --mode index
+/path/to/logloom/build/release/tools/logloom-bench --file Android.log --mode pread-parallel --query "ActivityManager"
+/usr/bin/time -l /path/to/logloom/build/release/cli/logloom search Android.log --query "Exception|Error|FATAL" --regex --limit 100 > /dev/null
+```
