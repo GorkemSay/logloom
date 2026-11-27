@@ -5,9 +5,9 @@
 
 ## Current Status
 
-- **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring (Planned)
-- **Next Step:** `Step 3.1 — IDE Compilation Database Configuration (.clangd & VS Code)` (awaiting approval)
-- **Last Completed Step:** `Step 2.5 — Instruments Profiling, Polish & v1.0.0`
+- **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring
+- **Next Step:** `Step 3.2 — Modularize cli/main.cpp (SRP command modules & declarative option parser)`
+- **Last Completed Step:** `Step 3.1 — IDE Compilation Database Configuration (.clangd & VS Code)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -33,7 +33,7 @@
 - [x] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
 
 ### Phase 3 — IDE Diagnostics & SOLID Refactoring
-- [ ] **Step 3.1** — IDE Compilation Database Configuration (`.clangd` & `.vscode`) to eliminate 193 false-positive Problems
+- [x] **Step 3.1** — IDE Compilation Database Configuration (`.clangd` & `.vscode`) to eliminate 193 false-positive Problems
 - [ ] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
 - [ ] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
 - [ ] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
@@ -290,6 +290,17 @@
   - `macos/Sources/LogloomCore/LogFile.swift` (`322` lines, max indent `44`): 6-level nested `withOptionalCString` / `withCString` closure pyramid inside `search(...)`.
   - `macos/Sources/LogloomApp/AppModel.swift` (`566` lines) & `ContentView.swift` (`487` lines): Combined file lifecycle, background indexing, live search debounce/streaming, inspector/context, and export state inside a single `AppModel` alongside monolithic view layout.
 - **Planned Steps:** `Step 3.1` through `Step 3.5` (no source files modified; awaiting user approval before starting implementation).
+
+### 2026-11-27 — Step 3.1: IDE Compilation Database Configuration (`.clangd` & `.vscode`)
+- **Files Touched:** `.clangd`, `.vscode/settings.json` (gitignored), `.vscode/c_cpp_properties.json` (gitignored), `PROGRESS.md`.
+- **Summary:**
+  - Added `.clangd` configured with `CompileFlags.CompilationDatabase: build/debug-asan` so `clangd` resolves exact CMake flags (`-std=c++20`, `-std=c11`, `-I include`, `-DLOGLOOM_VERSION_STRING`).
+  - Added local `.vscode/settings.json` and `.vscode/c_cpp_properties.json` (excluded by `.gitignore`) so both `clangd` and Microsoft C/C++ IntelliSense use `build/debug-asan/compile_commands.json`.
+- **Verification:**
+  - `clangd --check` across all 10 reported C/C++ files (`core/version.cpp`, `core/posix_file.cpp`, `core/line_reader.cpp`, `core/line_index.cpp`, `core/jsonl_extractor.cpp`, `core/search_match_internal.hpp`, `core/search_engine.cpp`, `core/mmap_reader.cpp`, `core/c_api.cpp`, `cli/main.cpp`): `0 errors/warnings` on every file.
+  - `ctest --preset debug-asan --output-on-failure` & `ctest --preset release --output-on-failure`: `32/32` tests passed.
+- **Next:** Execute **Step 3.2** (`cli/main.cpp` SRP modularization & declarative option parser) after user approval.
+- **Spec Drift / Follow-ups:** None.
 
 <!--
 Entry template for subsequent steps:
