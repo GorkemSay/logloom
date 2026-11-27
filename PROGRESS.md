@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring
-- **Next Step:** `Step 3.2 — Modularize cli/main.cpp (SRP command modules & declarative option parser)`
-- **Last Completed Step:** `Step 3.1 — IDE Compilation Database Configuration (.clangd & VS Code)`
+- **Next Step:** `Step 3.3 — Flatten core/c_api.cpp & core/jsonl_extractor.cpp (exception boundary helper & shallow JSON helpers)`
+- **Last Completed Step:** `Step 3.2 — Modularize cli/main.cpp (SRP command modules & declarative option parser)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -34,7 +34,7 @@
 
 ### Phase 3 — IDE Diagnostics & SOLID Refactoring
 - [x] **Step 3.1** — IDE Compilation Database Configuration (`.clangd` & `.vscode`) to eliminate 193 false-positive Problems
-- [ ] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
+- [x] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
 - [ ] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
 - [ ] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
 - [ ] **Step 3.5** — Refactor `macos/` Swift Layer (`CStringArena`, split `AppModel` controllers, modular SwiftUI views)
@@ -300,6 +300,19 @@
   - `clangd --check` across all 10 reported C/C++ files (`core/version.cpp`, `core/posix_file.cpp`, `core/line_reader.cpp`, `core/line_index.cpp`, `core/jsonl_extractor.cpp`, `core/search_match_internal.hpp`, `core/search_engine.cpp`, `core/mmap_reader.cpp`, `core/c_api.cpp`, `cli/main.cpp`): `0 errors/warnings` on every file.
   - `ctest --preset debug-asan --output-on-failure` & `ctest --preset release --output-on-failure`: `32/32` tests passed.
 - **Next:** Execute **Step 3.2** (`cli/main.cpp` SRP modularization & declarative option parser) after user approval.
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-27 — Step 3.2: Modularize `cli/main.cpp` (SRP & Declarative Option Parser)
+- **Files Touched:** `cli/CMakeLists.txt`, `cli/main.cpp`, `cli/cli_common.hpp`, `cli/cli_common.cpp`, `cli/arg_parser.hpp`, `cli/arg_parser.cpp`, `cli/commands.hpp`, `cli/cmd_trace.cpp`, `cli/cmd_search.cpp`, `cli/cmd_context.cpp`, `cli/cmd_stats.cpp`, `PROGRESS.md`.
+- **Summary:**
+  - Extracted shared CLI utilities (`cli_common.hpp/.cpp`) including `print_indexed_line`, `parse_u64`, `should_use_color`, `emit_scan_warnings`, and `open_input_file`.
+  - Built reusable declarative `ArgParser` (`arg_parser.hpp/.cpp`) supporting `--flag`, `--opt value`, `--opt=value`, `-h`/`--help`, positive-integer validation, and positional file capture without repetitive per-command `if/else` chains.
+  - Split `trace`, `search`, `context`, and `stats` into dedicated modules (`cmd_trace.cpp`, `cmd_search.cpp`, `cmd_context.cpp`, `cmd_stats.cpp`), reducing `cli/main.cpp` from `654` lines (`98` `if/else`, max indent `31`) to `64` lines (`7` `if`, max indent `12`).
+- **Verification:**
+  - `cmake --build --preset debug-asan && ctest --preset debug-asan --output-on-failure` (`32/32` passed, `0` warnings).
+  - `cmake --build --preset release && ctest --preset release --output-on-failure` (`32/32` passed, `0` warnings).
+  - `clangd --check` on all `cli/*.cpp` and `cli/*.hpp` files: `0 errors/warnings`.
+- **Next:** Execute **Step 3.3** (`core/c_api.cpp` & `core/jsonl_extractor.cpp` flattening) after user approval.
 - **Spec Drift / Follow-ups:** None.
 
 <!--
