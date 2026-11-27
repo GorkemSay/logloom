@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring
-- **Next Step:** `Step 3.4 — Deduplicate Parallel Search Engine (core/search_engine.cpp & core/mmap_reader.cpp shared pipeline)`
-- **Last Completed Step:** `Step 3.3 — Flatten core/c_api.cpp & core/jsonl_extractor.cpp (exception boundary helper & shallow JSON helpers)`
+- **Next Step:** `Step 3.5 — Refactor macos/ Swift Layer (CStringArena, split AppModel controllers, modular SwiftUI views)`
+- **Last Completed Step:** `Step 3.4 — Deduplicate Parallel Search Engine (core/search_engine.cpp & core/mmap_reader.cpp shared pipeline)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -36,7 +36,7 @@
 - [x] **Step 3.1** — IDE Compilation Database Configuration (`.clangd` & `.vscode`) to eliminate 193 false-positive Problems
 - [x] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
 - [x] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
-- [ ] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
+- [x] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
 - [ ] **Step 3.5** — Refactor `macos/` Swift Layer (`CStringArena`, split `AppModel` controllers, modular SwiftUI views)
 
 ---
@@ -326,6 +326,19 @@
   - `swift test --package-path macos` (`8/8` `LogloomCoreTests` passed, `0` warnings).
   - `clangd --check` on `core/c_api.cpp` and `core/jsonl_extractor.cpp`: `0 errors/warnings`.
 - **Next:** Execute **Step 3.4** (`core/search_engine.cpp` & `core/mmap_reader.cpp` parallel pipeline deduplication) after user approval.
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-27 — Step 3.4: Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp`)
+- **Files Touched:** `core/parallel_search_pipeline.hpp`, `core/search_engine.cpp`, `core/mmap_reader.cpp`, `PROGRESS.md`.
+- **Summary:**
+  - Extracted zero-overhead internal parallel pipeline (`core/parallel_search_pipeline.hpp`: `ByteRange`, `resolve_worker_count`, `is_cancelled`, `emit_partition_matches`, `run_parallel_partition_search`) decoupling thread-pool backpressure, cancellation, and deterministic ordered result merging from I/O backend specifics (DRY / OCP / DIP).
+  - Refactored `core/search_engine.cpp` (`446` -> `307` lines, `47` -> `30` `if`, max indent `17` -> `12`) and `core/mmap_reader.cpp` (`497` -> `363` lines, `40` -> `26` `if`) to share the unified pipeline.
+- **Verification:**
+  - `cmake --build --preset debug-asan && ctest --preset debug-asan --output-on-failure` (`32/32` passed, `0` warnings).
+  - `cmake --build --preset release && ctest --preset release --output-on-failure` (`32/32` passed, `0` warnings).
+  - `swift test --package-path macos` (`8/8` `LogloomCoreTests` passed, `0` warnings).
+  - `clangd --check` on `core/parallel_search_pipeline.hpp`, `core/search_engine.cpp`, and `core/mmap_reader.cpp`: `0 errors/warnings`.
+- **Next:** Execute **Step 3.5** (`macos/` Swift layer refactoring) after user approval.
 - **Spec Drift / Follow-ups:** None.
 
 <!--

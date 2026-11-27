@@ -1,5 +1,5 @@
 #include "logloom/mmap_reader.hpp"
-#include "search_match_internal.hpp"
+#include "parallel_search_pipeline.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -12,16 +12,24 @@
 namespace logloom {
 namespace {
 
-struct MmapPartition {
-  std::size_t start = 0;
-  std::size_t end = 0;
-};
+[[nodiscard]] std::size_t detect_mapped_bom_offset(
+    std::string_view view,
+    bool strip_utf8_bom) noexcept {
+  if (!strip_utf8_bom || view.size() < 3) {
+    return 0;
+  }
+  const bool has_bom =
+      static_cast<unsigned char>(view[0]) == 0xEF &&
+      static_cast<unsigned char>(view[1]) == 0xBB &&
+      static_cast<unsigned char>(view[2]) == 0xBF;
+  return has_bom ? 3U : 0U;
+}
 
-[[nodiscard]] std::vector<MmapPartition> partition_mapped_on_newlines(
+[[nodiscard]] std::vector<detail::ByteRange> partition_mapped_on_newlines(
     std::string_view view,
     std::size_t effective_start,
     std::size_t partition_bytes) {
-  std::vector<MmapPartition> partitions;
+  std::vector<detail::ByteRange> partitions;
   const std::size_t total = view.size();
   if (effective_start >= total) {
     return partitions;
@@ -32,20 +40,20 @@ struct MmapPartition {
 
   while (cur < total) {
     if (total - cur <= part_size) {
-      partitions.push_back(MmapPartition{cur, total});
+      partitions.push_back(detail::ByteRange{cur, total});
       break;
     }
 
     const std::size_t scan_pos = cur + part_size - 1;
     const void* nl = std::memchr(view.data() + scan_pos, '\n', total - scan_pos);
     if (nl == nullptr) {
-      partitions.push_back(MmapPartition{cur, total});
+      partitions.push_back(detail::ByteRange{cur, total});
       break;
     }
 
     const auto nl_idx = static_cast<std::size_t>(static_cast<const char*>(nl) - view.data());
     const std::size_t part_end = nl_idx + 1;
-    partitions.push_back(MmapPartition{cur, part_end});
+    partitions.push_back(detail::ByteRange{cur, part_end});
     cur = part_end;
   }
 
@@ -79,19 +87,11 @@ void scan_mapped_range(
 
     const std::size_t avail = range_end - pos;
     const void* nl = std::memchr(base + pos, '\n', avail);
-
-    std::size_t raw_len = 0;
-    bool is_truncated_eof = false;
-    std::size_t next_pos = 0;
-
-    if (nl != nullptr) {
-      raw_len = static_cast<std::size_t>(static_cast<const char*>(nl) - (base + pos));
-      next_pos = pos + raw_len + 1;
-    } else {
-      raw_len = avail;
-      is_truncated_eof = true;
-      next_pos = range_end;
-    }
+    const bool is_truncated_eof = (nl == nullptr);
+    const std::size_t raw_len = is_truncated_eof
+        ? avail
+        : static_cast<std::size_t>(static_cast<const char*>(nl) - (base + pos));
+    const std::size_t next_pos = is_truncated_eof ? range_end : (pos + raw_len + 1);
 
     const bool has_crlf = (!is_truncated_eof && raw_len > 0 && base[pos + raw_len - 1] == '\r');
     const std::size_t payload_len = has_crlf ? (raw_len - 1) : raw_len;
@@ -126,6 +126,58 @@ void scan_mapped_range(
       break;
     }
   }
+}
+
+[[nodiscard]] SearchStats search_mapped_single(
+    std::string_view full_view,
+    std::size_t effective_start,
+    const SearchQuery& query,
+    const JsonlExtractOptions& extract_opts,
+    const std::optional<std::regex>& compiled_regex,
+    const MatchCallback& on_match,
+    const std::atomic<bool>* cancel_flag) {
+  SearchStats stats{};
+  std::string unescape_buf;
+  scan_mapped_range(
+      full_view,
+      effective_start,
+      full_view.size(),
+      query,
+      extract_opts,
+      compiled_regex,
+      unescape_buf,
+      stats,
+      cancel_flag,
+      nullptr,
+      [&](std::uint64_t line_no,
+          std::uint64_t byte_offset,
+          std::uint64_t byte_length,
+          std::string_view content,
+          const ExtractedFields& fields,
+          bool has_crlf,
+          bool is_truncated_eof) {
+        if (on_match) {
+          const SearchMatch match{
+              .line_number = line_no,
+              .byte_offset = byte_offset,
+              .byte_length = byte_length,
+              .content = content,
+              .fields = fields,
+              .has_crlf = has_crlf,
+              .is_truncated_eof = is_truncated_eof,
+          };
+          if (!on_match(match)) {
+            stats.cancelled = true;
+            return false;
+          }
+        }
+        if (query.limit > 0 && stats.matches_found >= query.limit) {
+          stats.limit_reached = true;
+          return false;
+        }
+        return true;
+      });
+  return stats;
 }
 
 } // namespace
@@ -235,28 +287,10 @@ SearchStats search_file_mmap(
   }
 
   const std::string_view full_view = mapped.view();
-  std::size_t effective_start = 0;
-  if (query.reader_options.strip_utf8_bom && full_view.size() >= 3 &&
-      static_cast<unsigned char>(full_view[0]) == 0xEF &&
-      static_cast<unsigned char>(full_view[1]) == 0xBB &&
-      static_cast<unsigned char>(full_view[2]) == 0xBF) {
-    effective_start = 3;
-  }
-
+  const std::size_t effective_start =
+      detect_mapped_bom_offset(full_view, query.reader_options.strip_utf8_bom);
   if (effective_start >= full_view.size()) {
     return SearchStats{};
-  }
-
-  const JsonlExtractOptions extract_opts{
-      .trace_key = query.trace_key,
-      .timestamp_key = query.timestamp_key,
-      .level_key = query.level_key,
-  };
-
-  std::size_t worker_count = parallel_options.num_threads;
-  if (worker_count == 0) {
-    const unsigned int hw = std::thread::hardware_concurrency();
-    worker_count = hw > 0 ? static_cast<std::size_t>(hw) : 1U;
   }
 
   const auto partitions = partition_mapped_on_newlines(
@@ -264,234 +298,66 @@ SearchStats search_file_mmap(
   if (partitions.empty()) {
     return SearchStats{};
   }
-  worker_count = std::min(worker_count, partitions.size());
+
+  const std::size_t worker_count =
+      detail::resolve_worker_count(parallel_options.num_threads, partitions.size());
 
   if (worker_count <= 1 || partitions.size() <= 1) {
-    SearchStats stats{};
-    std::string unescape_buf;
-    scan_mapped_range(
-        full_view,
-        effective_start,
-        full_view.size(),
-        query,
-        extract_opts,
-        compiled_regex,
-        unescape_buf,
-        stats,
-        cancel_flag,
-        nullptr,
-        [&](std::uint64_t line_no,
-            std::uint64_t byte_offset,
-            std::uint64_t byte_length,
-            std::string_view content,
-            const ExtractedFields& fields,
-            bool has_crlf,
-            bool is_truncated_eof) {
-          if (on_match) {
-            const SearchMatch match{
-                .line_number = line_no,
-                .byte_offset = byte_offset,
-                .byte_length = byte_length,
-                .content = content,
-                .fields = fields,
-                .has_crlf = has_crlf,
-                .is_truncated_eof = is_truncated_eof,
-            };
-            if (!on_match(match)) {
-              stats.cancelled = true;
-              return false;
-            }
-          }
-          if (query.limit > 0 && stats.matches_found >= query.limit) {
-            stats.limit_reached = true;
-            return false;
-          }
-          return true;
-        });
-    return stats;
+    const JsonlExtractOptions extract_opts{
+        .trace_key = query.trace_key,
+        .timestamp_key = query.timestamp_key,
+        .level_key = query.level_key,
+    };
+    return search_mapped_single(
+        full_view, effective_start, query, extract_opts, compiled_regex, on_match, cancel_flag);
   }
 
   compiled_regex.reset();
-  const std::size_t max_in_flight = std::max<std::size_t>(worker_count * 2, 2);
-  std::mutex mu;
-  std::condition_variable cv_work;
-  std::condition_variable cv_done;
-  std::size_t next_to_claim = 0;
-  std::size_t next_to_emit = 0;
-  std::size_t active_workers = worker_count;
-  std::vector<std::optional<detail::PartitionResult>> completed(partitions.size());
-  std::atomic<bool> internal_cancel{false};
-  std::vector<std::thread> threads;
-  threads.reserve(worker_count);
-
-  detail::ThreadPoolGuard pool_guard{internal_cancel, cv_work, threads};
-
-  auto worker_fn = [&]() {
-    std::optional<std::regex> worker_regex;
-    std::error_code regex_ec;
-    if (!detail::compile_query_regex(query, worker_regex, regex_ec)) {
-      std::lock_guard<std::mutex> lock(mu);
-      --active_workers;
-      cv_done.notify_one();
-      return;
-    }
-    std::string unescape_buf;
-
-    while (true) {
-      std::size_t part_idx = 0;
-      {
-        std::unique_lock<std::mutex> lock(mu);
-        cv_work.wait(lock, [&] {
-          return internal_cancel.load(std::memory_order_acquire) ||
-                 (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) ||
-                 next_to_claim >= partitions.size() ||
-                 (next_to_claim - next_to_emit) < max_in_flight;
-        });
-        if (internal_cancel.load(std::memory_order_acquire) ||
-            (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) ||
-            next_to_claim >= partitions.size()) {
-          break;
-        }
-        part_idx = next_to_claim++;
-      }
-
-      const MmapPartition part = partitions[part_idx];
-      detail::PartitionResult part_res{};
-
-      scan_mapped_range(
-          full_view,
-          part.start,
-          part.end,
-          query,
-          extract_opts,
-          worker_regex,
-          unescape_buf,
-          part_res.stats,
-          cancel_flag,
-          &internal_cancel,
-          [&](std::uint64_t line_no,
-              std::uint64_t byte_offset,
-              std::uint64_t byte_length,
-              std::string_view content,
-              const ExtractedFields&,
-              bool has_crlf,
-              bool is_truncated_eof) {
-            if (on_match) {
-              part_res.matches.push_back(detail::OwnedMatch{
-                  .local_line_number = line_no,
-                  .byte_offset = byte_offset,
-                  .byte_length = byte_length,
-                  .content = std::string(content),
-                  .has_crlf = has_crlf,
-                  .is_truncated_eof = is_truncated_eof,
-              });
-            }
-            return true;
-          });
-
-      {
-        std::lock_guard<std::mutex> lock(mu);
-        completed[part_idx] = std::move(part_res);
-      }
-      cv_done.notify_one();
-    }
-
-    {
-      std::lock_guard<std::mutex> lock(mu);
-      --active_workers;
-    }
-    cv_done.notify_one();
-  };
-
-  for (std::size_t i = 0; i < worker_count; ++i) {
-    threads.emplace_back(worker_fn);
-  }
-
-  SearchStats total_stats{};
-  std::uint64_t line_offset = 0;
-
-  for (std::size_t emit_idx = 0; emit_idx < partitions.size(); ++emit_idx) {
-    detail::PartitionResult part_res{};
-    {
-      std::unique_lock<std::mutex> lock(mu);
-      cv_done.wait(lock, [&] {
-        return completed[emit_idx].has_value() || active_workers == 0;
+  const bool collect_matches = static_cast<bool>(on_match);
+  return detail::run_parallel_partition_search(
+      partitions,
+      query,
+      on_match,
+      worker_count,
+      ec,
+      cancel_flag,
+      [&](const detail::ByteRange& part,
+          const JsonlExtractOptions& extract_opts,
+          const std::optional<std::regex>& worker_regex,
+          std::string& unescape_buf,
+          const std::atomic<bool>& internal_cancel,
+          detail::PartitionResult& out_res) {
+        scan_mapped_range(
+            full_view,
+            static_cast<std::size_t>(part.start),
+            static_cast<std::size_t>(part.end),
+            query,
+            extract_opts,
+            worker_regex,
+            unescape_buf,
+            out_res.stats,
+            cancel_flag,
+            &internal_cancel,
+            [&](std::uint64_t line_no,
+                std::uint64_t byte_offset,
+                std::uint64_t byte_length,
+                std::string_view content,
+                const ExtractedFields&,
+                bool has_crlf,
+                bool is_truncated_eof) {
+              if (collect_matches) {
+                out_res.matches.push_back(detail::OwnedMatch{
+                    .local_line_number = line_no,
+                    .byte_offset = byte_offset,
+                    .byte_length = byte_length,
+                    .content = std::string(content),
+                    .has_crlf = has_crlf,
+                    .is_truncated_eof = is_truncated_eof,
+                });
+              }
+              return true;
+            });
       });
-      if (!completed[emit_idx].has_value()) {
-        if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) {
-          total_stats.cancelled = true;
-        }
-        break;
-      }
-      part_res = std::move(*completed[emit_idx]);
-      completed[emit_idx].reset();
-      next_to_emit = emit_idx + 1;
-    }
-    cv_work.notify_all();
-
-    detail::merge_partition_stats(part_res.stats, total_stats);
-
-    bool stop_emitting = false;
-    if (!on_match) {
-      if (query.limit > 0) {
-        const std::uint64_t remaining = query.limit - total_stats.matches_found;
-        if (part_res.stats.matches_found >= remaining) {
-          total_stats.matches_found = query.limit;
-          total_stats.limit_reached = true;
-          stop_emitting = true;
-        } else {
-          total_stats.matches_found += part_res.stats.matches_found;
-        }
-      } else {
-        total_stats.matches_found += part_res.stats.matches_found;
-      }
-    } else {
-      for (const auto& owned : part_res.matches) {
-        if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_relaxed)) {
-          total_stats.cancelled = true;
-          stop_emitting = true;
-          break;
-        }
-
-        ++total_stats.matches_found;
-        const ExtractedFields fields = extract_jsonl_fields(owned.content, extract_opts);
-        const SearchMatch match{
-            .line_number = line_offset + owned.local_line_number,
-            .byte_offset = owned.byte_offset,
-            .byte_length = owned.byte_length,
-            .content = owned.content,
-            .fields = fields,
-            .has_crlf = owned.has_crlf,
-            .is_truncated_eof = owned.is_truncated_eof,
-        };
-        if (!on_match(match)) {
-          total_stats.cancelled = true;
-          stop_emitting = true;
-          break;
-        }
-        if (query.limit > 0 && total_stats.matches_found >= query.limit) {
-          total_stats.limit_reached = true;
-          stop_emitting = true;
-          break;
-        }
-      }
-    }
-
-    if (part_res.stats.cancelled && !total_stats.limit_reached) {
-      total_stats.cancelled = true;
-      stop_emitting = true;
-    }
-
-    if (stop_emitting) {
-      internal_cancel.store(true, std::memory_order_release);
-      cv_work.notify_all();
-      break;
-    }
-
-    line_offset += part_res.stats.lines_scanned;
-  }
-
-  return total_stats;
 }
 
 } // namespace logloom
