@@ -4,563 +4,444 @@ import LogloomCore
 import UniformTypeIdentifiers
 
 private final class SecurityScopeGuard {
-  let url: URL
-  private let didStartAccess: Bool
+    let url: URL
+    private let didStartAccess: Bool
 
-  init(url: URL) {
-    self.url = url
-    self.didStartAccess = url.startAccessingSecurityScopedResource()
-  }
-
-  deinit {
-    if didStartAccess {
-      url.stopAccessingSecurityScopedResource()
+    init(url: URL) {
+        self.url = url
+        self.didStartAccess = url.startAccessingSecurityScopedResource()
     }
-  }
+
+    deinit {
+        if didStartAccess {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
 }
 
 @MainActor
 final class AppModel: ObservableObject {
-  @Published private(set) var fileName: String?
-  @Published private(set) var filePath: String?
-  @Published private(set) var fileSize: UInt64 = 0
-  @Published private(set) var isIndexed: Bool = false
-  @Published private(set) var isIndexing: Bool = false
-  @Published private(set) var indexProgress: Double = 0
-  @Published private(set) var indexedLinesSoFar: UInt64 = 0
-  @Published private(set) var indexStats: IndexStats?
-  @Published private(set) var hasTruncatedFinalLine: Bool = false
-  @Published private(set) var oversizedLineCount: UInt64 = 0
-  @Published var truncatedBannerDismissed: Bool = false
-  @Published var selectedLineNumber: UInt64?
-  @Published private(set) var viewportRevision: UInt64 = 0
-  @Published var errorMessage: String?
+    @Published private(set) var fileName: String?
+    @Published private(set) var filePath: String?
+    @Published private(set) var fileSize: UInt64 = 0
+    @Published private(set) var isIndexed: Bool = false
+    @Published private(set) var isIndexing: Bool = false
+    @Published private(set) var indexProgress: Double = 0
+    @Published private(set) var indexedLinesSoFar: UInt64 = 0
+    @Published private(set) var indexStats: IndexStats?
+    @Published private(set) var hasTruncatedFinalLine: Bool = false
+    @Published private(set) var oversizedLineCount: UInt64 = 0
+    @Published var truncatedBannerDismissed: Bool = false
+    @Published var selectedLineNumber: UInt64?
+    @Published private(set) var viewportRevision: UInt64 = 0
+    @Published var errorMessage: String?
 
-  @Published var searchText: String = ""
-  @Published var isRegex: Bool = false
-  @Published var isCaseSensitive: Bool = false
-  @Published var selectedLevel: String? = nil
-  @Published private(set) var isolatedTraceID: String? = nil
-  @Published private(set) var isSearching: Bool = false
-  @Published private(set) var searchError: String? = nil
-  @Published private(set) var searchMatchCount: Int = 0
-  @Published private(set) var searchStats: SearchStats? = nil
-  @Published private(set) var searchLimitReached: Bool = false
-  @Published private(set) var searchDurationMs: Double? = nil
-  @Published private(set) var focusSearchTrigger: UInt64 = 0
+    @Published var searchText: String = ""
+    @Published var isRegex: Bool = false
+    @Published var isCaseSensitive: Bool = false
+    @Published var selectedLevel: String? = nil
+    @Published private(set) var isolatedTraceID: String? = nil
+    @Published private(set) var isSearching: Bool = false
+    @Published private(set) var searchError: String? = nil
+    @Published private(set) var searchMatchCount: Int = 0
+    @Published private(set) var searchStats: SearchStats? = nil
+    @Published private(set) var searchLimitReached: Bool = false
+    @Published private(set) var searchDurationMs: Double? = nil
+    @Published private(set) var focusSearchTrigger: UInt64 = 0
 
-  @Published var isInspectorVisible: Bool = true
-  @Published private(set) var selectedLine: LogLine? = nil
-  @Published private(set) var contextLines: [LogLine] = []
-  @Published var contextRadius: Int = 10
-  @Published var isJumpToLinePresented: Bool = false
-  @Published private(set) var isExporting: Bool = false
-  @Published private(set) var exportStatusMessage: String? = nil
-  @Published private(set) var scrollToSelectionTrigger: UInt64 = 0
+    @Published var isInspectorVisible: Bool = true
+    @Published private(set) var selectedLine: LogLine? = nil
+    @Published private(set) var contextLines: [LogLine] = []
+    @Published var contextRadius: Int = 10
+    @Published var isJumpToLinePresented: Bool = false
+    @Published private(set) var isExporting: Bool = false
+    @Published private(set) var exportStatusMessage: String? = nil
+    @Published private(set) var scrollToSelectionTrigger: UInt64 = 0
 
-  let viewportStore = ViewportStore()
+    let viewportStore = ViewportStore()
 
-  private static let interactiveMatchLimit: UInt64 = 100_000
+    private static let interactiveMatchLimit: UInt64 = 100_000
 
-  private var scopeGuard: SecurityScopeGuard?
-  private var openedFile: LogFile?
-  private var openGeneration: UInt64 = 0
-  private var indexCancelToken: CancelToken?
-  private var indexTask: Task<Void, Never>?
-  private var searchGeneration: UInt64 = 0
-  private var searchCancelToken: CancelToken?
-  private var searchTask: Task<Void, Never>?
+    private let indexingController = IndexingController()
+    private let searchController = SearchController()
+    private let exportController = ExportController()
 
-  var hasOpenFile: Bool {
-    openedFile != nil
-  }
+    private var scopeGuard: SecurityScopeGuard?
+    private var openedFile: LogFile?
+    private var openGeneration: UInt64 = 0
 
-  var rowCount: Int {
-    viewportStore.rowCount
-  }
-
-  var isFilterActive: Bool {
-    !searchText.isEmpty || selectedLevel != nil || isolatedTraceID != nil
-  }
-
-  var formattedFileSize: String {
-    ByteCountFormatter.string(fromByteCount: Int64(clamping: fileSize), countStyle: .file)
-  }
-
-  func openPanel() {
-    let panel = NSOpenPanel()
-    panel.title = "Open Log File"
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.allowsMultipleSelection = false
-    panel.canCreateDirectories = false
-
-    var types: [UTType] = [.plainText, .log]
-    if let json = UTType(filenameExtension: "jsonl") {
-      types.append(json)
-    }
-    if let ndjson = UTType(filenameExtension: "ndjson") {
-      types.append(ndjson)
-    }
-    panel.allowedContentTypes = types
-
-    if panel.runModal() == .OK, let url = panel.url {
-      openFile(url: url)
-    }
-  }
-
-  func openFile(url: URL) {
-    guard url.isFileURL else {
-      errorMessage = "Only local files are supported."
-      return
+    var hasOpenFile: Bool {
+        openedFile != nil
     }
 
-    openGeneration &+= 1
-    let generation = openGeneration
-    indexCancelToken?.cancel()
-    indexTask?.cancel()
-    cancelActiveSearch()
-
-    let guardScope = SecurityScopeGuard(url: url)
-    do {
-      let file = try LogFile(path: url.path)
-      let head = try file.readHead(maxLines: 500)
-
-      self.openedFile = file
-      self.scopeGuard = guardScope
-      self.fileName = url.lastPathComponent
-      self.filePath = url.path
-      self.fileSize = file.fileSize
-      self.isIndexed = false
-      self.isIndexing = true
-      self.indexProgress = 0
-      self.indexedLinesSoFar = UInt64(head.count)
-      self.indexStats = nil
-      self.hasTruncatedFinalLine = false
-      self.oversizedLineCount = 0
-      self.truncatedBannerDismissed = false
-      self.selectedLineNumber = nil
-      self.selectedLine = nil
-      self.contextLines = []
-      self.isJumpToLinePresented = false
-      self.isExporting = false
-      self.exportStatusMessage = nil
-      self.errorMessage = nil
-
-      resetFilterState()
-      self.viewportStore.configureFile(file, headLines: head)
-      self.viewportRevision &+= 1
-
-      startBackgroundIndexing(file: file, generation: generation)
-    } catch {
-      self.errorMessage = error.localizedDescription
-    }
-  }
-
-  func closeFile() {
-    openGeneration &+= 1
-    indexCancelToken?.cancel()
-    indexCancelToken = nil
-    indexTask?.cancel()
-    indexTask = nil
-    cancelActiveSearch()
-
-    openedFile = nil
-    scopeGuard = nil
-    fileName = nil
-    filePath = nil
-    fileSize = 0
-    isIndexed = false
-    isIndexing = false
-    indexProgress = 0
-    indexedLinesSoFar = 0
-    indexStats = nil
-    hasTruncatedFinalLine = false
-    oversizedLineCount = 0
-    truncatedBannerDismissed = false
-    selectedLineNumber = nil
-    selectedLine = nil
-    contextLines = []
-    isJumpToLinePresented = false
-    isExporting = false
-    exportStatusMessage = nil
-    errorMessage = nil
-
-    resetFilterState()
-    viewportStore.configureFile(nil, headLines: [])
-    viewportRevision &+= 1
-  }
-
-  func refreshSelectedLineAndContext() {
-    guard let lineNum = selectedLineNumber else {
-      selectedLine = nil
-      contextLines = []
-      return
+    var rowCount: Int {
+        viewportStore.rowCount
     }
 
-    if let row = viewportStore.rowIndex(forLineNumber: lineNum),
-      let cached = viewportStore.line(atRow: row)
-    {
-      selectedLine = cached
-    } else if isIndexed, let file = openedFile {
-      selectedLine = try? file.readLine(lineNum)
-    } else {
-      selectedLine = nil
+    var isFilterActive: Bool {
+        !searchText.isEmpty || selectedLevel != nil || isolatedTraceID != nil
     }
 
-    if isInspectorVisible, isIndexed, let file = openedFile {
-      let radius = UInt64(max(1, contextRadius))
-      contextLines = (try? file.readContext(around: lineNum, before: radius, after: radius)) ?? []
-    } else {
-      contextLines = []
-    }
-  }
-
-  func toggleInspector() {
-    isInspectorVisible.toggle()
-    refreshSelectedLineAndContext()
-  }
-
-  func selectNextMatch() {
-    let count = viewportStore.rowCount
-    guard count > 0 else { return }
-    let currentRow = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
-    let nextRow = currentRow.map { ($0 + 1) % count } ?? 0
-    if let line = viewportStore.line(atRow: nextRow) {
-      selectedLineNumber = line.lineNumber
-      scrollToSelectionTrigger &+= 1
-      refreshSelectedLineAndContext()
-    }
-  }
-
-  func selectPreviousMatch() {
-    let count = viewportStore.rowCount
-    guard count > 0 else { return }
-    let currentRow = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
-    let prevRow = currentRow.map { ($0 - 1 + count) % count } ?? (count - 1)
-    if let line = viewportStore.line(atRow: prevRow) {
-      selectedLineNumber = line.lineNumber
-      scrollToSelectionTrigger &+= 1
-      refreshSelectedLineAndContext()
-    }
-  }
-
-  func requestJumpToLine() {
-    guard hasOpenFile else { return }
-    isJumpToLinePresented = true
-  }
-
-  func jumpToLine(_ lineNumber: UInt64, clearFiltersIfNeeded: Bool = true) {
-    guard lineNumber > 0 else { return }
-    let maxAvailable: UInt64
-    if isIndexed {
-      maxAvailable = openedFile?.lineCount ?? 0
-    } else {
-      maxAvailable = UInt64(viewportStore.pageCache.rowCount)
-    }
-    guard maxAvailable > 0 else { return }
-
-    let clampedLine = min(lineNumber, maxAvailable)
-    if viewportStore.mode == .filtered,
-      viewportStore.rowIndex(forLineNumber: clampedLine) == nil,
-      clearFiltersIfNeeded
-    {
-      clearAllFilters()
+    var formattedFileSize: String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: fileSize), countStyle: .file)
     }
 
-    selectedLineNumber = clampedLine
-    scrollToSelectionTrigger &+= 1
-    refreshSelectedLineAndContext()
-  }
+    func openPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Open Log File"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
 
-  func exportFilteredPanel() {
-    guard let file = openedFile, isFilterActive, !isExporting else { return }
-
-    let panel = NSSavePanel()
-    panel.title = "Export Filtered Logs"
-    panel.canCreateDirectories = true
-    var allowedTypes: [UTType] = [.plainText]
-    if let jsonl = UTType(filenameExtension: "jsonl") {
-      allowedTypes.insert(jsonl, at: 0)
-    }
-    panel.allowedContentTypes = allowedTypes
-
-    let baseStem = (fileName as NSString?)?.deletingPathExtension ?? "logloom"
-    let suffix = isolatedTraceID.map { "trace-\($0)" } ?? "filtered"
-    panel.nameFieldStringValue = "\(baseStem)-\(suffix).jsonl"
-
-    guard panel.runModal() == .OK, let destinationURL = panel.url else {
-      return
-    }
-
-    let sourcePath = filePath
-    let fileGeneration = openGeneration
-    let query = SearchQuery(
-      traceID: isolatedTraceID,
-      level: selectedLevel,
-      textQuery: searchText.isEmpty ? nil : searchText,
-      caseSensitive: isCaseSensitive,
-      isRegex: isRegex,
-      limit: 0,
-      numThreads: 0
-    )
-
-    isExporting = true
-    exportStatusMessage = "Exporting..."
-    errorMessage = nil
-
-    Task.detached(priority: .userInitiated) { [weak self] in
-      do {
-        let count = try LogExporter.exportFiltered(
-          file: file,
-          sourcePath: sourcePath,
-          query: query,
-          to: destinationURL
-        )
-        await MainActor.run { [weak self] in
-          guard let self, self.openGeneration == fileGeneration else { return }
-          self.isExporting = false
-          self.exportStatusMessage = "Exported \(count) line(s) to \(destinationURL.lastPathComponent)"
+        var types: [UTType] = [.plainText, .log]
+        if let json = UTType(filenameExtension: "jsonl") {
+            types.append(json)
         }
-      } catch {
-        await MainActor.run { [weak self] in
-          guard let self, self.openGeneration == fileGeneration else { return }
-          self.isExporting = false
-          self.exportStatusMessage = nil
-          self.errorMessage = error.localizedDescription
+        if let ndjson = UTType(filenameExtension: "ndjson") {
+            types.append(ndjson)
         }
-      }
+        panel.allowedContentTypes = types
+
+        if panel.runModal() == .OK, let url = panel.url {
+            openFile(url: url)
+        }
     }
-  }
 
-  func requestSearchFocus() {
-    guard hasOpenFile else { return }
-    focusSearchTrigger &+= 1
-  }
+    func openFile(url: URL) {
+        guard url.isFileURL else {
+            errorMessage = "Only local files are supported."
+            return
+        }
 
-  func isolateTrace(_ traceID: String) {
-    guard !traceID.isEmpty else { return }
-    isolatedTraceID = traceID
-    scheduleSearch(immediate: true)
-  }
+        openGeneration &+= 1
+        let fileGeneration = openGeneration
+        indexingController.cancel()
+        searchController.cancel()
 
-  func clearTraceIsolation() {
-    guard isolatedTraceID != nil else { return }
-    isolatedTraceID = nil
-    scheduleSearch(immediate: true)
-  }
+        let guardScope = SecurityScopeGuard(url: url)
+        do {
+            let file = try LogFile(path: url.path)
+            let head = try file.readHead(maxLines: 500)
 
-  func clearAllFilters() {
-    cancelActiveSearch()
-    let hadFilters = isFilterActive || viewportStore.mode == .filtered || searchError != nil
-    resetFilterState()
-    viewportStore.setFullFileMode()
-    if hadFilters {
-      viewportRevision &+= 1
+            openedFile = file
+            scopeGuard = guardScope
+            fileName = url.lastPathComponent
+            filePath = url.path
+            fileSize = file.fileSize
+            isIndexed = false
+            isIndexing = true
+            indexProgress = 0
+            indexedLinesSoFar = UInt64(head.count)
+            indexStats = nil
+            hasTruncatedFinalLine = false
+            oversizedLineCount = 0
+            truncatedBannerDismissed = false
+            selectedLineNumber = nil
+            selectedLine = nil
+            contextLines = []
+            isJumpToLinePresented = false
+            isExporting = false
+            exportStatusMessage = nil
+            errorMessage = nil
+
+            resetFilterState()
+            viewportStore.configureFile(file, headLines: head)
+            viewportRevision &+= 1
+
+            startIndexing(file: file, fileGeneration: fileGeneration)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
-  }
 
-  func scheduleSearch(immediate: Bool) {
-    cancelActiveSearch()
+    func closeFile() {
+        openGeneration &+= 1
+        indexingController.cancel()
+        searchController.cancel()
 
-    guard let file = openedFile, isFilterActive else {
-      let needsReload =
-        viewportStore.mode == .filtered || searchError != nil || searchStats != nil
-        || searchMatchCount > 0
-      searchError = nil
-      searchStats = nil
-      searchMatchCount = 0
-      searchLimitReached = false
-      searchDurationMs = nil
-      isSearching = false
-      if viewportStore.mode == .filtered {
-        viewportStore.setFullFileMode()
-      }
-      if needsReload {
+        openedFile = nil
+        scopeGuard = nil
+        fileName = nil
+        filePath = nil
+        fileSize = 0
+        isIndexed = false
+        isIndexing = false
+        indexProgress = 0
+        indexedLinesSoFar = 0
+        indexStats = nil
+        hasTruncatedFinalLine = false
+        oversizedLineCount = 0
+        truncatedBannerDismissed = false
+        selectedLineNumber = nil
+        selectedLine = nil
+        contextLines = []
+        isJumpToLinePresented = false
+        isExporting = false
+        exportStatusMessage = nil
+        errorMessage = nil
+
+        resetFilterState()
+        viewportStore.configureFile(nil, headLines: [])
         viewportRevision &+= 1
-      }
-      return
     }
 
-    let fileGeneration = openGeneration
-    let generation = searchGeneration
-    let query = SearchQuery(
-      traceID: isolatedTraceID,
-      level: selectedLevel,
-      textQuery: searchText.isEmpty ? nil : searchText,
-      caseSensitive: isCaseSensitive,
-      isRegex: isRegex,
-      limit: Self.interactiveMatchLimit,
-      numThreads: 0
-    )
+    func refreshSelectedLineAndContext() {
+        guard let lineNum = selectedLineNumber else {
+            selectedLine = nil
+            contextLines = []
+            return
+        }
 
-    isSearching = true
-    searchError = nil
-    searchLimitReached = false
-    searchDurationMs = nil
+        if let row = viewportStore.rowIndex(forLineNumber: lineNum),
+            let cached = viewportStore.line(atRow: row)
+        {
+            selectedLine = cached
+        } else if isIndexed, let file = openedFile {
+            selectedLine = try? file.readLine(lineNum)
+        } else {
+            selectedLine = nil
+        }
 
-    let token = CancelToken()
-    searchCancelToken = token
+        if isInspectorVisible, isIndexed, let file = openedFile {
+            let radius = UInt64(max(1, contextRadius))
+            contextLines = (try? file.readContext(around: lineNum, before: radius, after: radius)) ?? []
+        } else {
+            contextLines = []
+        }
+    }
 
-    searchTask = Task.detached(priority: .userInitiated) { [weak self] in
-      if !immediate {
-        try? await Task.sleep(nanoseconds: 120_000_000)
-      }
-      if Task.isCancelled || token.isCancelled {
-        return
-      }
+    func toggleInspector() {
+        isInspectorVisible.toggle()
+        refreshSelectedLineAndContext()
+    }
 
-      await MainActor.run { [weak self] in
-        guard let self,
-          self.openGeneration == fileGeneration,
-          self.searchGeneration == generation
-        else { return }
-        self.viewportStore.beginFilteredMode()
-        self.searchMatchCount = 0
-        self.viewportRevision &+= 1
-      }
+    func selectNextMatch() {
+        let count = viewportStore.rowCount
+        guard count > 0 else { return }
+        let currentRow = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
+        let nextRow = currentRow.map { ($0 + 1) % count } ?? 0
+        if let line = viewportStore.line(atRow: nextRow) {
+            selectedLineNumber = line.lineNumber
+            scrollToSelectionTrigger &+= 1
+            refreshSelectedLineAndContext()
+        }
+    }
 
-      if Task.isCancelled || token.isCancelled {
-        return
-      }
+    func selectPreviousMatch() {
+        let count = viewportStore.rowCount
+        guard count > 0 else { return }
+        let currentRow = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
+        let prevRow = currentRow.map { ($0 - 1 + count) % count } ?? (count - 1)
+        if let line = viewportStore.line(atRow: prevRow) {
+            selectedLineNumber = line.lineNumber
+            scrollToSelectionTrigger &+= 1
+            refreshSelectedLineAndContext()
+        }
+    }
 
-      let startTime = CFAbsoluteTimeGetCurrent()
-      var batch: [SearchMatch] = []
-      batch.reserveCapacity(200)
-      var lastFlushTime = startTime
+    func requestJumpToLine() {
+        guard hasOpenFile else { return }
+        isJumpToLinePresented = true
+    }
 
-      do {
-        let stats = try file.search(query, cancelToken: token) { match in
-          if token.isCancelled {
-            return false
-          }
-          batch.append(match)
-          let now = CFAbsoluteTimeGetCurrent()
-          if batch.count >= 200 || (now - lastFlushTime) >= 0.05 {
-            let chunk = batch
-            batch.removeAll(keepingCapacity: true)
-            lastFlushTime = now
-            Task { @MainActor [weak self] in
-              guard let self,
-                self.openGeneration == fileGeneration,
-                self.searchGeneration == generation
-              else { return }
-              self.viewportStore.appendFilteredMatches(chunk)
-              self.searchMatchCount = self.viewportStore.rowCount
-              self.viewportRevision &+= 1
+    func jumpToLine(_ lineNumber: UInt64, clearFiltersIfNeeded: Bool = true) {
+        guard lineNumber > 0 else { return }
+        let maxAvailable = isIndexed
+            ? (openedFile?.lineCount ?? 0)
+            : UInt64(viewportStore.pageCache.rowCount)
+        guard maxAvailable > 0 else { return }
+
+        let clampedLine = min(lineNumber, maxAvailable)
+        if viewportStore.mode == .filtered,
+            viewportStore.rowIndex(forLineNumber: clampedLine) == nil,
+            clearFiltersIfNeeded
+        {
+            clearAllFilters()
+        }
+
+        selectedLineNumber = clampedLine
+        scrollToSelectionTrigger &+= 1
+        refreshSelectedLineAndContext()
+    }
+
+    func exportFilteredPanel() {
+        guard let file = openedFile, isFilterActive, !isExporting else { return }
+
+        let fileGeneration = openGeneration
+        let query = makeSearchQuery(limit: 0)
+        exportController.exportFiltered(
+            file: file,
+            sourcePath: filePath,
+            fileName: fileName,
+            isolatedTraceID: isolatedTraceID,
+            query: query,
+            onStart: { [weak self] in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.isExporting = true
+                self.exportStatusMessage = "Exporting..."
+                self.errorMessage = nil
+            },
+            onComplete: { [weak self] count, destName in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.isExporting = false
+                self.exportStatusMessage = "Exported \(count) line(s) to \(destName)"
+            },
+            onError: { [weak self] error in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.isExporting = false
+                self.exportStatusMessage = nil
+                self.errorMessage = error.localizedDescription
             }
-          }
-          return !token.isCancelled
-        }
-
-        let remaining = batch
-        let elapsedMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
-
-        await MainActor.run { [weak self] in
-          guard let self,
-            self.openGeneration == fileGeneration,
-            self.searchGeneration == generation
-          else { return }
-          if !remaining.isEmpty {
-            self.viewportStore.appendFilteredMatches(remaining)
-          }
-          self.isSearching = false
-          self.searchStats = stats
-          self.searchMatchCount = self.viewportStore.rowCount
-          self.searchLimitReached = stats.limitReached
-          self.searchDurationMs = elapsedMs
-          self.viewportRevision &+= 1
-        }
-      } catch {
-        await MainActor.run { [weak self] in
-          guard let self,
-            self.openGeneration == fileGeneration,
-            self.searchGeneration == generation
-          else { return }
-          self.isSearching = false
-          if case LogloomError.cancelled = error {
-            return
-          }
-          if token.isCancelled {
-            return
-          }
-          self.searchError = error.localizedDescription
-        }
-      }
+        )
     }
-  }
 
-  private func cancelActiveSearch() {
-    searchGeneration &+= 1
-    searchCancelToken?.cancel()
-    searchCancelToken = nil
-    searchTask?.cancel()
-    searchTask = nil
-    isSearching = false
-  }
+    func requestSearchFocus() {
+        guard hasOpenFile else { return }
+        focusSearchTrigger &+= 1
+    }
 
-  private func resetFilterState() {
-    searchText = ""
-    isRegex = false
-    isCaseSensitive = false
-    selectedLevel = nil
-    isolatedTraceID = nil
-    isSearching = false
-    searchError = nil
-    searchMatchCount = 0
-    searchStats = nil
-    searchLimitReached = false
-    searchDurationMs = nil
-  }
+    func isolateTrace(_ traceID: String) {
+        guard !traceID.isEmpty else { return }
+        isolatedTraceID = traceID
+        scheduleSearch(immediate: true)
+    }
 
-  private func startBackgroundIndexing(file: LogFile, generation: UInt64) {
-    let token = CancelToken()
-    self.indexCancelToken = token
+    func clearTraceIsolation() {
+        guard isolatedTraceID != nil else { return }
+        isolatedTraceID = nil
+        scheduleSearch(immediate: true)
+    }
 
-    self.indexTask = Task.detached(priority: .userInitiated) { [weak self] in
-      var lastProgressDispatch: CFAbsoluteTime = 0
-      do {
-        let stats = try file.buildIndex(cancelToken: token) {
-          bytesProcessed, bytesTotal, linesIndexed in
-          let now = CFAbsoluteTimeGetCurrent()
-          if now - lastProgressDispatch >= 0.05 {
-            lastProgressDispatch = now
-            let ratio: Double =
-              bytesTotal > 0
-              ? min(1.0, max(0.0, Double(bytesProcessed) / Double(bytesTotal)))
-              : 1.0
-            Task { @MainActor [weak self] in
-              guard let self, self.openGeneration == generation else { return }
-              self.indexedLinesSoFar = linesIndexed
-              self.indexProgress = ratio
+    func clearAllFilters() {
+        searchController.cancel()
+        let hadFilters = isFilterActive || viewportStore.mode == .filtered || searchError != nil
+        resetFilterState()
+        viewportStore.setFullFileMode()
+        if hadFilters {
+            viewportRevision &+= 1
+        }
+    }
+
+    func scheduleSearch(immediate: Bool) {
+        searchController.cancel()
+
+        guard let file = openedFile, isFilterActive else {
+            let needsReload = viewportStore.mode == .filtered
+                || searchError != nil
+                || searchStats != nil
+                || searchMatchCount > 0
+            searchError = nil
+            searchStats = nil
+            searchMatchCount = 0
+            searchLimitReached = false
+            searchDurationMs = nil
+            isSearching = false
+            if viewportStore.mode == .filtered {
+                viewportStore.setFullFileMode()
             }
-          }
-          return !token.isCancelled
+            if needsReload {
+                viewportRevision &+= 1
+            }
+            return
         }
 
-        await MainActor.run { [weak self] in
-          guard let self, self.openGeneration == generation else { return }
-          self.isIndexing = false
-          self.isIndexed = true
-          self.indexProgress = 1.0
-          self.indexedLinesSoFar = stats.totalLines
-          self.indexStats = stats
-          self.hasTruncatedFinalLine = stats.hasTruncatedFinalLine
-          self.oversizedLineCount = stats.oversizedLines
-          self.viewportStore.pageCache.clearCache()
-          self.viewportRevision &+= 1
-          self.refreshSelectedLineAndContext()
-        }
-      } catch {
-        await MainActor.run { [weak self] in
-          guard let self, self.openGeneration == generation else { return }
-          self.isIndexing = false
-          if case LogloomError.cancelled = error {
-            return
-          }
-          self.errorMessage = error.localizedDescription
-        }
-      }
+        let fileGeneration = openGeneration
+        let query = makeSearchQuery(limit: Self.interactiveMatchLimit)
+
+        isSearching = true
+        searchError = nil
+        searchLimitReached = false
+        searchDurationMs = nil
+
+        searchController.start(
+            file: file,
+            query: query,
+            immediate: immediate,
+            onBegin: { [weak self] in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.viewportStore.beginFilteredMode()
+                self.searchMatchCount = 0
+                self.viewportRevision &+= 1
+            },
+            onBatch: { [weak self] chunk in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.viewportStore.appendFilteredMatches(chunk)
+                self.searchMatchCount = self.viewportStore.rowCount
+                self.viewportRevision &+= 1
+            },
+            onComplete: { [weak self] remaining, stats, elapsedMs in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                if !remaining.isEmpty {
+                    self.viewportStore.appendFilteredMatches(remaining)
+                }
+                self.isSearching = false
+                self.searchStats = stats
+                self.searchMatchCount = self.viewportStore.rowCount
+                self.searchLimitReached = stats.limitReached
+                self.searchDurationMs = elapsedMs
+                self.viewportRevision &+= 1
+            },
+            onError: { [weak self] error in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.isSearching = false
+                self.searchError = error.localizedDescription
+            }
+        )
     }
-  }
+
+    private func startIndexing(file: LogFile, fileGeneration: UInt64) {
+        indexingController.start(
+            file: file,
+            onProgress: { [weak self] linesIndexed, ratio in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.indexedLinesSoFar = linesIndexed
+                self.indexProgress = ratio
+            },
+            onComplete: { [weak self] stats in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.isIndexing = false
+                self.isIndexed = true
+                self.indexProgress = 1.0
+                self.indexedLinesSoFar = stats.totalLines
+                self.indexStats = stats
+                self.hasTruncatedFinalLine = stats.hasTruncatedFinalLine
+                self.oversizedLineCount = stats.oversizedLines
+                self.viewportStore.pageCache.clearCache()
+                self.viewportRevision &+= 1
+                self.refreshSelectedLineAndContext()
+            },
+            onError: { [weak self] error in
+                guard let self, self.openGeneration == fileGeneration else { return }
+                self.isIndexing = false
+                self.errorMessage = error.localizedDescription
+            }
+        )
+    }
+
+    private func makeSearchQuery(limit: UInt64) -> SearchQuery {
+        SearchQuery(
+            traceID: isolatedTraceID,
+            level: selectedLevel,
+            textQuery: searchText.isEmpty ? nil : searchText,
+            caseSensitive: isCaseSensitive,
+            isRegex: isRegex,
+            limit: limit,
+            numThreads: 0
+        )
+    }
+
+    private func resetFilterState() {
+        searchText = ""
+        isRegex = false
+        isCaseSensitive = false
+        selectedLevel = nil
+        isolatedTraceID = nil
+        isSearching = false
+        searchError = nil
+        searchMatchCount = 0
+        searchStats = nil
+        searchLimitReached = false
+        searchDurationMs = nil
+    }
 }

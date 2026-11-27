@@ -17,14 +17,26 @@ private final class MatchBox {
     }
 }
 
-private func withOptionalCString<Result>(
-    _ string: String?,
-    _ body: (UnsafePointer<CChar>?) throws -> Result
-) rethrows -> Result {
-    guard let string else {
-        return try body(nil)
+/// RAII arena owning temporary C-string duplicates for a single C-ABI call frame.
+private final class CStringArena {
+    private var allocations: [UnsafeMutablePointer<CChar>] = []
+
+    deinit {
+        for ptr in allocations {
+            free(ptr)
+        }
     }
-    return try string.withCString { try body($0) }
+
+    func allocate(_ string: String?) -> UnsafePointer<CChar>? {
+        guard let string else {
+            return nil
+        }
+        guard let ptr = string.withCString({ strdup($0) }) else {
+            return nil
+        }
+        allocations.append(ptr)
+        return UnsafePointer(ptr)
+    }
 }
 
 private func decodeUTF8Slice(_ ptr: UnsafePointer<CChar>?, length: Int) -> String? {
@@ -78,53 +90,33 @@ public final class LogFile: @unchecked Sendable {
         timestampKey: String? = nil,
         levelKey: String? = nil
     ) -> ExtractedFields {
+        let arena = CStringArena()
+        let cTrace = arena.allocate(traceKey)
+        let cTimestamp = arena.allocate(timestampKey)
+        let cLevel = arena.allocate(levelKey)
+
         let bytes = Array(line.utf8)
-        return bytes.withUnsafeBufferPointer { buffer in
-            withOptionalCString(traceKey) { cTrace in
-                withOptionalCString(timestampKey) { cTimestamp in
-                    withOptionalCString(levelKey) { cLevel in
-                        var cFields = logloom_extracted_fields_t()
-                        let status: logloom_status_t
-                        if let base = buffer.baseAddress, !bytes.isEmpty {
-                            status = base.withMemoryRebound(
-                                to: CChar.self,
-                                capacity: bytes.count
-                            ) { cPtr in
-                                logloom_extract_fields(
-                                    cPtr,
-                                    bytes.count,
-                                    cTrace,
-                                    cTimestamp,
-                                    cLevel,
-                                    &cFields
-                                )
-                            }
-                        } else {
-                            status = logloom_extract_fields(
-                                nil,
-                                0,
-                                cTrace,
-                                cTimestamp,
-                                cLevel,
-                                &cFields
-                            )
-                        }
-
-                        guard status == LOGLOOM_OK else {
-                            return ExtractedFields(kind: .plainText)
-                        }
-
-                        return ExtractedFields(
-                            kind: LogLineKind(cKind: cFields.kind),
-                            timestamp: decodeUTF8Slice(cFields.timestamp, length: cFields.timestamp_length),
-                            level: decodeUTF8Slice(cFields.level, length: cFields.level_length),
-                            traceID: decodeUTF8Slice(cFields.trace_id, length: cFields.trace_id_length),
-                            hasEscapesInTraceID: cFields.has_escapes_in_trace_id
-                        )
-                    }
-                }
+        var cFields = logloom_extracted_fields_t()
+        let status: logloom_status_t = bytes.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress, !bytes.isEmpty else {
+                return logloom_extract_fields(nil, 0, cTrace, cTimestamp, cLevel, &cFields)
+            }
+            return base.withMemoryRebound(to: CChar.self, capacity: bytes.count) { cPtr in
+                logloom_extract_fields(cPtr, bytes.count, cTrace, cTimestamp, cLevel, &cFields)
             }
         }
+
+        guard status == LOGLOOM_OK else {
+            return ExtractedFields(kind: .plainText)
+        }
+
+        return ExtractedFields(
+            kind: LogLineKind(cKind: cFields.kind),
+            timestamp: decodeUTF8Slice(cFields.timestamp, length: cFields.timestamp_length),
+            level: decodeUTF8Slice(cFields.level, length: cFields.level_length),
+            traceID: decodeUTF8Slice(cFields.trace_id, length: cFields.trace_id_length),
+            hasEscapesInTraceID: cFields.has_escapes_in_trace_id
+        )
     }
 
     public func readHead(maxLines: Int) throws -> [LogLine] {
@@ -202,77 +194,35 @@ public final class LogFile: @unchecked Sendable {
         cancelToken: CancelToken? = nil,
         onMatch: ((SearchMatch) -> Bool)? = nil
     ) throws -> SearchStats {
+        let arena = CStringArena()
+        var cQuery = logloom_search_query_default()
+        cQuery.trace_id = arena.allocate(query.traceID)
+        cQuery.trace_key = arena.allocate(query.traceKey)
+        cQuery.level = arena.allocate(query.level)
+        cQuery.level_key = arena.allocate(query.levelKey)
+        cQuery.timestamp_key = arena.allocate(query.timestampKey)
+        cQuery.text_query = arena.allocate(query.textQuery)
+        cQuery.case_sensitive = query.caseSensitive
+        cQuery.is_regex = query.isRegex
+        cQuery.limit = query.limit
+        cQuery.num_threads = max(query.numThreads, 0)
+
         var cStats = logloom_search_stats_t()
-        let status: logloom_status_t = withOptionalCString(query.traceID) { cTraceID in
-            query.traceKey.withCString { cTraceKey in
-                withOptionalCString(query.level) { cLevel in
-                    query.levelKey.withCString { cLevelKey in
-                        query.timestampKey.withCString { cTimestampKey in
-                            withOptionalCString(query.textQuery) { cTextQuery in
-                                var cQuery = logloom_search_query_default()
-                                cQuery.trace_id = cTraceID
-                                cQuery.trace_key = cTraceKey
-                                cQuery.level = cLevel
-                                cQuery.level_key = cLevelKey
-                                cQuery.timestamp_key = cTimestampKey
-                                cQuery.text_query = cTextQuery
-                                cQuery.case_sensitive = query.caseSensitive
-                                cQuery.is_regex = query.isRegex
-                                cQuery.limit = query.limit
-                                cQuery.num_threads = max(query.numThreads, 0)
+        let status: logloom_status_t
 
-                                if let onMatch {
-                                    let box = MatchBox(onMatch)
-                                    let userData = Unmanaged.passRetained(box).toOpaque()
-                                    defer { Unmanaged<MatchBox>.fromOpaque(userData).release() }
+        if let onMatch {
+            let box = MatchBox(onMatch)
+            let userData = Unmanaged.passRetained(box).toOpaque()
+            defer { Unmanaged<MatchBox>.fromOpaque(userData).release() }
 
-                                    let cb: logloom_match_cb = { cMatchPtr, ctx in
-                                        guard let cMatchPtr, let ctx else { return true }
-                                        let m = cMatchPtr.pointee
-                                        let box = Unmanaged<MatchBox>.fromOpaque(ctx).takeUnretainedValue()
-                                        let content = decodeUTF8Slice(m.content, length: m.content_length) ?? ""
-                                        let fields = ExtractedFields(
-                                            kind: LogLineKind(cKind: m.kind),
-                                            timestamp: decodeUTF8Slice(m.timestamp, length: m.timestamp_length),
-                                            level: decodeUTF8Slice(m.level, length: m.level_length),
-                                            traceID: decodeUTF8Slice(m.trace_id, length: m.trace_id_length),
-                                            hasEscapesInTraceID: false
-                                        )
-                                        let match = SearchMatch(
-                                            lineNumber: m.line_number,
-                                            byteOffset: m.byte_offset,
-                                            byteLength: m.byte_length,
-                                            content: content,
-                                            fields: fields,
-                                            hasCRLF: m.has_crlf,
-                                            isTruncatedEOF: m.is_truncated_eof
-                                        )
-                                        return box.handler(match)
-                                    }
-
-                                    return logloom_file_search(
-                                        raw,
-                                        &cQuery,
-                                        cb,
-                                        userData,
-                                        cancelToken?.raw,
-                                        &cStats
-                                    )
-                                } else {
-                                    return logloom_file_search(
-                                        raw,
-                                        &cQuery,
-                                        nil,
-                                        nil,
-                                        cancelToken?.raw,
-                                        &cStats
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+            let cb: logloom_match_cb = { cMatchPtr, ctx in
+                guard let cMatchPtr, let ctx else { return true }
+                let box = Unmanaged<MatchBox>.fromOpaque(ctx).takeUnretainedValue()
+                return box.handler(LogFile.convertMatch(cMatchPtr.pointee))
             }
+            status = logloom_file_search(raw, &cQuery, cb, userData, cancelToken?.raw, &cStats)
+        } else {
+            status = logloom_file_search(raw, &cQuery, nil, nil, cancelToken?.raw, &cStats)
         }
 
         guard status == LOGLOOM_OK else {
@@ -290,6 +240,26 @@ public final class LogFile: @unchecked Sendable {
             hasTruncatedFinalLine: cStats.has_truncated_final_line,
             cancelled: cStats.cancelled,
             limitReached: cStats.limit_reached
+        )
+    }
+
+    private static func convertMatch(_ m: logloom_search_match_t) -> SearchMatch {
+        let content = decodeUTF8Slice(m.content, length: m.content_length) ?? ""
+        let fields = ExtractedFields(
+            kind: LogLineKind(cKind: m.kind),
+            timestamp: decodeUTF8Slice(m.timestamp, length: m.timestamp_length),
+            level: decodeUTF8Slice(m.level, length: m.level_length),
+            traceID: decodeUTF8Slice(m.trace_id, length: m.trace_id_length),
+            hasEscapesInTraceID: false
+        )
+        return SearchMatch(
+            lineNumber: m.line_number,
+            byteOffset: m.byte_offset,
+            byteLength: m.byte_length,
+            content: content,
+            fields: fields,
+            hasCRLF: m.has_crlf,
+            isTruncatedEOF: m.is_truncated_eof
         )
     }
 

@@ -5,9 +5,9 @@
 
 ## Current Status
 
-- **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring
-- **Next Step:** `Step 3.5 — Refactor macos/ Swift Layer (CStringArena, split AppModel controllers, modular SwiftUI views)`
-- **Last Completed Step:** `Step 3.4 — Deduplicate Parallel Search Engine (core/search_engine.cpp & core/mmap_reader.cpp shared pipeline)`
+- **Active Phase:** Completed (`v1.0.0` + Phase 3 SOLID Refactoring)
+- **Next Step:** None
+- **Last Completed Step:** `Step 3.5 — Refactor macos/ Swift Layer (CStringArena, split AppModel controllers, modular SwiftUI views)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -37,7 +37,7 @@
 - [x] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
 - [x] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
 - [x] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
-- [ ] **Step 3.5** — Refactor `macos/` Swift Layer (`CStringArena`, split `AppModel` controllers, modular SwiftUI views)
+- [x] **Step 3.5** — Refactor `macos/` Swift Layer (`CStringArena`, split `AppModel` controllers, modular SwiftUI views)
 
 ---
 
@@ -339,6 +339,20 @@
   - `swift test --package-path macos` (`8/8` `LogloomCoreTests` passed, `0` warnings).
   - `clangd --check` on `core/parallel_search_pipeline.hpp`, `core/search_engine.cpp`, and `core/mmap_reader.cpp`: `0 errors/warnings`.
 - **Next:** Execute **Step 3.5** (`macos/` Swift layer refactoring) after user approval.
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-27 — Step 3.5: Refactor `macos/` Swift Layer
+- **Files Touched:** `macos/Sources/LogloomCore/LogFile.swift`, `macos/Sources/LogloomApp/AppModel.swift`, `macos/Sources/LogloomApp/IndexingController.swift`, `macos/Sources/LogloomApp/SearchController.swift`, `macos/Sources/LogloomApp/ExportController.swift`, `macos/Sources/LogloomApp/ContentView.swift`, `macos/Sources/LogloomApp/SearchFilterBarView.swift`, `macos/Sources/LogloomApp/StatusBarView.swift`, `macos/Sources/LogloomApp/JumpToLineSheet.swift`, `PROGRESS.md`.
+- **Summary:**
+  - Introduced RAII `CStringArena` and `LogFile.convertMatch` in `LogFile.swift`, eliminating the 6-level nested `withOptionalCString` / `withCString` closure pyramid in `extractFields` and `search` (`max_indent` reduced from `44` down to `16`, `322` -> `292` lines).
+  - Extracted dedicated SRP async lifecycle controllers (`IndexingController`, `SearchController`, `ExportController`), reducing `AppModel.swift` (`566` -> `447` lines) to pure observable state coordination.
+  - Split `ContentView.swift` (`487` -> `277` lines) into focused SwiftUI components (`SearchFilterBarView`, `TraceBannerView`, `StatusBarView`, `JumpToLineSheet`).
+- **Verification:**
+  - `cmake --build --preset debug-asan && ctest --preset debug-asan --output-on-failure` (`32/32` passed, `0` warnings).
+  - `cmake --build --preset release && ctest --preset release --output-on-failure` (`32/32` passed, `0` warnings).
+  - `swift test --package-path macos` (`8/8` `LogloomCoreTests` passed, `0` warnings).
+  - `./macos/scripts/bundle_app.sh` built and ad-hoc signed `build/macos/Logloom.app` cleanly.
+- **Next:** None — Phase 3 complete.
 - **Spec Drift / Follow-ups:** None.
 
 <!--
