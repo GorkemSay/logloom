@@ -305,4 +305,38 @@ final class LogloomCoreTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: cancelledDest.path))
     }
+
+    func testExtractMessageAndTimestampFormatting() throws {
+        let jsonWithMessage = #"{"timestamp":"2026-11-27T09:41:14.253Z","level":"ERROR","request_id":"req-7c02","message":"Gateway deadline exceeded","nested":{"message":"ignore"}}"#
+        let f1 = LogFile.extractFields(from: jsonWithMessage, traceKey: "request_id", timestampKey: "timestamp", levelKey: "level")
+        XCTAssertEqual(f1.kind, .jsonObject)
+        XCTAssertEqual(f1.message, "Gateway deadline exceeded")
+        XCTAssertEqual(f1.level, "ERROR")
+        XCTAssertEqual(f1.traceID, "req-7c02")
+
+        let jsonWithEscapedMsg = #"{"timestamp":"2026-11-27T09:41:14Z","level":"INFO","msg":"Quoted \"ok\""}"#
+        let f2 = LogFile.extractFields(from: jsonWithEscapedMsg, traceKey: "request_id", timestampKey: "timestamp", levelKey: "level")
+        XCTAssertEqual(f2.message, "Quoted \"ok\"")
+
+        let nestedOnly = #"{"level":"INFO","nested":{"message":"should not promote"}}"#
+        let f3 = LogFile.extractFields(from: nestedOnly, traceKey: "request_id", timestampKey: "timestamp", levelKey: "level")
+        XCTAssertNil(f3.message)
+
+        let plain = LogLine(
+            lineNumber: 1,
+            byteOffset: 0,
+            byteLength: 10,
+            content: "plain line",
+            hasCRLF: false,
+            isTruncatedEOF: false,
+            exceedsMaxLength: false,
+            fields: ExtractedFields(kind: .plainText)
+        )
+        XCTAssertEqual(plain.displayMessage, "plain line")
+        XCTAssertFalse(plain.hasStructuredFields)
+
+        XCTAssertEqual(JSONFormatter.formatTimestampForTable("2026-11-27T09:41:14.253Z"), "09:41:14.253")
+        XCTAssertEqual(JSONFormatter.formatTimestampForTable("2026-11-27 09:41:14"), "2026-11-27 09:41:14")
+        XCTAssertEqual(JSONFormatter.formatTimestampForTable(nil), "")
+    }
 }

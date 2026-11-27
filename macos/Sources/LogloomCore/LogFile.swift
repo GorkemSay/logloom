@@ -90,12 +90,28 @@ public final class LogFile: @unchecked Sendable {
     timestampKey: String? = nil,
     levelKey: String? = nil
   ) -> ExtractedFields {
+    let bytes = Array(line.utf8)
+    return extractFieldsFromBytes(
+      bytes,
+      traceKey: traceKey,
+      timestampKey: timestampKey,
+      levelKey: levelKey,
+      includeMessage: true
+    )
+  }
+
+  private static func extractFieldsFromBytes(
+    _ bytes: [UInt8],
+    traceKey: String?,
+    timestampKey: String?,
+    levelKey: String?,
+    includeMessage: Bool
+  ) -> ExtractedFields {
     let arena = CStringArena()
     let cTrace = arena.allocate(traceKey)
     let cTimestamp = arena.allocate(timestampKey)
     let cLevel = arena.allocate(levelKey)
 
-    let bytes = Array(line.utf8)
     var cFields = logloom_extracted_fields_t()
     let status: logloom_status_t = bytes.withUnsafeBufferPointer { buffer in
       guard let base = buffer.baseAddress, !bytes.isEmpty else {
@@ -110,13 +126,53 @@ public final class LogFile: @unchecked Sendable {
       return ExtractedFields(kind: .plainText)
     }
 
+    let kind = LogLineKind(cKind: cFields.kind)
+    let message: String? =
+      (includeMessage && kind == .jsonObject)
+      ? extractMessage(from: bytes, arena: arena)
+      : nil
+
     return ExtractedFields(
-      kind: LogLineKind(cKind: cFields.kind),
+      kind: kind,
       timestamp: decodeUTF8Slice(cFields.timestamp, length: cFields.timestamp_length),
       level: decodeUTF8Slice(cFields.level, length: cFields.level_length),
       traceID: decodeUTF8Slice(cFields.trace_id, length: cFields.trace_id_length),
+      message: message,
       hasEscapesInTraceID: cFields.has_escapes_in_trace_id
     )
+  }
+
+  private static func extractMessage(from bytes: [UInt8], arena: CStringArena) -> String? {
+    guard !bytes.isEmpty else { return nil }
+    let emptyKey = arena.allocate("")
+    for candidateKey in ["message", "msg"] {
+      let cKey = arena.allocate(candidateKey)
+      var cFields = logloom_extracted_fields_t()
+      let status: logloom_status_t = bytes.withUnsafeBufferPointer { buffer in
+        guard let base = buffer.baseAddress else { return LOGLOOM_ERR_INVALID_ARG }
+        return base.withMemoryRebound(to: CChar.self, capacity: bytes.count) { cPtr in
+          logloom_extract_fields(cPtr, bytes.count, cKey, emptyKey, emptyKey, &cFields)
+        }
+      }
+      guard status == LOGLOOM_OK,
+        let rawMsg = decodeUTF8Slice(cFields.trace_id, length: cFields.trace_id_length),
+        !rawMsg.isEmpty
+      else {
+        continue
+      }
+      if !cFields.has_escapes_in_trace_id {
+        return rawMsg
+      }
+      if let wrapped = "\"\(rawMsg)\"".data(using: .utf8),
+        let decoded = try? JSONSerialization.jsonObject(with: wrapped, options: .fragmentsAllowed)
+          as? String,
+        !decoded.isEmpty
+      {
+        return decoded
+      }
+      return rawMsg
+    }
+    return nil
   }
 
   public func readHead(maxLines: Int) throws -> [LogLine] {
@@ -247,11 +303,17 @@ public final class LogFile: @unchecked Sendable {
 
   private static func convertMatch(_ m: logloom_search_match_t) -> SearchMatch {
     let content = decodeUTF8Slice(m.content, length: m.content_length) ?? ""
+    let kind = LogLineKind(cKind: m.kind)
+    let message: String? =
+      (kind == .jsonObject)
+      ? extractMessage(from: Array(content.utf8), arena: CStringArena())
+      : nil
     let fields = ExtractedFields(
-      kind: LogLineKind(cKind: m.kind),
+      kind: kind,
       timestamp: decodeUTF8Slice(m.timestamp, length: m.timestamp_length),
       level: decodeUTF8Slice(m.level, length: m.level_length),
       traceID: decodeUTF8Slice(m.trace_id, length: m.trace_id_length),
+      message: message,
       hasEscapesInTraceID: false
     )
     return SearchMatch(

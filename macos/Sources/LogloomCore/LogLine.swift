@@ -23,6 +23,7 @@ public struct ExtractedFields: Sendable, Equatable {
     public let timestamp: String?
     public let level: String?
     public let traceID: String?
+    public let message: String?
     public let hasEscapesInTraceID: Bool
 
     public init(
@@ -30,12 +31,14 @@ public struct ExtractedFields: Sendable, Equatable {
         timestamp: String? = nil,
         level: String? = nil,
         traceID: String? = nil,
+        message: String? = nil,
         hasEscapesInTraceID: Bool = false
     ) {
         self.kind = kind
         self.timestamp = timestamp
         self.level = level
         self.traceID = traceID
+        self.message = message
         self.hasEscapesInTraceID = hasEscapesInTraceID
     }
 }
@@ -51,6 +54,14 @@ public struct LogLine: Identifiable, Sendable, Equatable {
     public let isTruncatedEOF: Bool
     public let exceedsMaxLength: Bool
     public let fields: ExtractedFields
+
+    public var displayMessage: String {
+        fields.message ?? content
+    }
+
+    public var hasStructuredFields: Bool {
+        fields.timestamp != nil || fields.level != nil || fields.traceID != nil
+    }
 
     public init(
         lineNumber: UInt64,

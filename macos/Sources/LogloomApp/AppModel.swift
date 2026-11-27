@@ -49,7 +49,8 @@ final class AppModel: ObservableObject {
   @Published private(set) var searchDurationMs: Double? = nil
   @Published private(set) var focusSearchTrigger: UInt64 = 0
 
-  @Published var isInspectorVisible: Bool = true
+  @Published var isInspectorVisible: Bool = false
+  @Published private(set) var hasStructuredFields: Bool = false
   @Published private(set) var selectedLine: LogLine? = nil
   @Published private(set) var contextLines: [LogLine] = []
   @Published var contextRadius: Int = 10
@@ -69,6 +70,7 @@ final class AppModel: ObservableObject {
   private var scopeGuard: SecurityScopeGuard?
   private var openedFile: LogFile?
   private var openGeneration: UInt64 = 0
+  private var userDismissedInspector: Bool = false
 
   var hasOpenFile: Bool {
     openedFile != nil
@@ -76,6 +78,13 @@ final class AppModel: ObservableObject {
 
   var rowCount: Int {
     viewportStore.rowCount
+  }
+
+  var totalFileLineCount: UInt64 {
+    if isIndexed {
+      return indexStats?.totalLines ?? UInt64(viewportStore.pageCache.rowCount)
+    }
+    return UInt64(viewportStore.pageCache.rowCount)
   }
 
   var isFilterActive: Bool {
@@ -140,6 +149,9 @@ final class AppModel: ObservableObject {
       selectedLineNumber = nil
       selectedLine = nil
       contextLines = []
+      isInspectorVisible = false
+      userDismissedInspector = false
+      hasStructuredFields = head.contains(where: \.hasStructuredFields)
       isJumpToLinePresented = false
       isExporting = false
       exportStatusMessage = nil
@@ -176,6 +188,9 @@ final class AppModel: ObservableObject {
     selectedLineNumber = nil
     selectedLine = nil
     contextLines = []
+    isInspectorVisible = false
+    userDismissedInspector = false
+    hasStructuredFields = false
     isJumpToLinePresented = false
     isExporting = false
     exportStatusMessage = nil
@@ -184,6 +199,12 @@ final class AppModel: ObservableObject {
     resetFilterState()
     viewportStore.configureFile(nil, headLines: [])
     viewportRevision &+= 1
+  }
+
+  func markStructuredFieldsDetected() {
+    if !hasStructuredFields {
+      hasStructuredFields = true
+    }
   }
 
   func refreshSelectedLineAndContext() {
@@ -203,6 +224,14 @@ final class AppModel: ObservableObject {
       selectedLine = nil
     }
 
+    if selectedLine?.hasStructuredFields == true {
+      markStructuredFieldsDetected()
+    }
+
+    if selectedLine != nil, !userDismissedInspector, !isInspectorVisible {
+      isInspectorVisible = true
+    }
+
     if isInspectorVisible, isIndexed, let file = openedFile {
       let radius = UInt64(max(1, contextRadius))
       contextLines = (try? file.readContext(around: lineNum, before: radius, after: radius)) ?? []
@@ -212,7 +241,16 @@ final class AppModel: ObservableObject {
   }
 
   func toggleInspector() {
-    isInspectorVisible.toggle()
+    if isInspectorVisible {
+      isInspectorVisible = false
+      userDismissedInspector = true
+    } else {
+      userDismissedInspector = false
+      isInspectorVisible = true
+      if selectedLineNumber == nil, rowCount > 0 {
+        selectedLineNumber = viewportStore.line(atRow: 0)?.lineNumber
+      }
+    }
     refreshSelectedLineAndContext()
   }
 
@@ -369,6 +407,13 @@ final class AppModel: ObservableObject {
       onBatch: { [weak self] chunk in
         guard let self, self.openGeneration == fileGeneration else { return }
         self.viewportStore.appendFilteredMatches(chunk)
+        if !self.hasStructuredFields,
+          chunk.contains(where: {
+            $0.fields.timestamp != nil || $0.fields.level != nil || $0.fields.traceID != nil
+          })
+        {
+          self.hasStructuredFields = true
+        }
         self.searchMatchCount = self.viewportStore.rowCount
         self.viewportRevision &+= 1
       },
@@ -376,6 +421,13 @@ final class AppModel: ObservableObject {
         guard let self, self.openGeneration == fileGeneration else { return }
         if !remaining.isEmpty {
           self.viewportStore.appendFilteredMatches(remaining)
+          if !self.hasStructuredFields,
+            remaining.contains(where: {
+              $0.fields.timestamp != nil || $0.fields.level != nil || $0.fields.traceID != nil
+            })
+          {
+            self.hasStructuredFields = true
+          }
         }
         self.isSearching = false
         self.searchStats = stats

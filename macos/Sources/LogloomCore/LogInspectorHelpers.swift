@@ -24,6 +24,21 @@ public enum JSONFormatter {
             return nil
         }
     }
+
+    /// Formats an ISO-8601 UTC timestamp for compact table display (`HH:MM:SS.mmm` or raw fallback).
+    public static func formatTimestampForTable(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else {
+            return ""
+        }
+        guard let tIndex = raw.firstIndex(of: "T") else {
+            return raw
+        }
+        let afterT = raw[raw.index(after: tIndex)...]
+        if afterT.hasSuffix("Z") {
+            return String(afterT.dropLast())
+        }
+        return String(afterT)
+    }
 }
 
 public enum LogExportError: Error, LocalizedError, Equatable {

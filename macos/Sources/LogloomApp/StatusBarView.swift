@@ -1,48 +1,50 @@
 import SwiftUI
 
 struct StatusBarView: View {
-    @ObservedObject var model: AppModel
+  @ObservedObject var model: AppModel
 
-    var body: some View {
-        HStack(spacing: 12) {
-            rowSummaryText
+  var body: some View {
+    HStack(spacing: 10) {
+      Circle()
+        .fill(LogloomTheme.readOnlyDot)
+        .frame(width: 6, height: 6)
 
-            if model.oversizedLineCount > 0 {
-                Text("\(model.oversizedLineCount) oversized line(s) skipped")
-                    .foregroundStyle(.orange)
-            }
+      rowSummaryText
 
-            if let exportMsg = model.exportStatusMessage {
-                Text(exportMsg)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+      if model.oversizedLineCount > 0 {
+        Text("· \(model.oversizedLineCount) oversized skipped")
+          .foregroundStyle(LogloomTheme.copper)
+      }
 
-            Spacer()
+      if let exportMsg = model.exportStatusMessage {
+        Text("· \(exportMsg)")
+          .foregroundStyle(LogloomTheme.textSoft)
+          .lineLimit(1)
+      }
 
-            if let selectedLine = model.selectedLineNumber {
-                Text("Line \(selectedLine)")
-            }
-        }
-        .font(.caption.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .background(.bar)
+      Spacer()
+
+      if let selectedLine = model.selectedLineNumber {
+        Text("Line \(selectedLine)")
+          .foregroundStyle(LogloomTheme.textMuted)
+      }
     }
+    .font(.system(size: 11).monospacedDigit())
+    .foregroundStyle(LogloomTheme.textMuted)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 6)
+    .background(LogloomTheme.panel)
+  }
 
-    @ViewBuilder
-    private var rowSummaryText: some View {
-        if model.isFilterActive {
-            if model.searchLimitReached {
-                Text("Showing \(model.rowCount) matching line(s) (100k limit reached)")
-            } else {
-                Text("Showing \(model.rowCount) matching line(s)")
-            }
-        } else if model.isIndexed {
-            Text("\(model.rowCount) lines")
-        } else {
-            Text("Preview: \(model.rowCount) lines (indexing in background)")
-        }
+  @ViewBuilder
+  private var rowSummaryText: some View {
+    if model.isFilterActive {
+      let suffix = model.searchLimitReached ? " (100k limit)" : ""
+      Text("Read-only · \(model.rowCount) of \(model.totalFileLineCount) lines\(suffix)")
+    } else if model.isIndexed {
+      Text("Read-only · \(model.rowCount) lines")
+    } else {
+      Text("Read-only · Preview: \(model.rowCount) lines (indexing…)")
     }
+  }
 }

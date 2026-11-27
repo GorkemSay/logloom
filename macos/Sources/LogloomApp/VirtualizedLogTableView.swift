@@ -2,22 +2,87 @@ import AppKit
 import LogloomCore
 import SwiftUI
 
+final class CopperAccentTableRowView: NSTableRowView {
+  override func drawSelection(in dirtyRect: NSRect) {
+    guard selectionHighlightStyle != .none else { return }
+    let bg =
+      isEmphasized
+      ? LogloomTheme.nsSelectedRowBg
+      : LogloomTheme.nsSelectedRowUnfocusedBg
+    bg.setFill()
+    bounds.fill()
+
+    let barColor =
+      isEmphasized
+      ? LogloomTheme.nsCopper
+      : LogloomTheme.nsCopper.withAlphaComponent(0.55)
+    barColor.setFill()
+    NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+  }
+}
+
+final class LogTableHeaderCell: NSTableHeaderCell {
+  override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+    LogloomTheme.nsCanvas.setFill()
+    cellFrame.fill()
+
+    LogloomTheme.nsBorder.setFill()
+    NSRect(x: cellFrame.minX, y: cellFrame.maxY - 1, width: cellFrame.width, height: 1).fill()
+
+    drawInterior(withFrame: cellFrame, in: controlView)
+  }
+
+  override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+      .foregroundColor: LogloomTheme.nsTextMuted,
+    ]
+    let insetX: CGFloat = 6
+    let textRect = NSRect(
+      x: cellFrame.minX + insetX,
+      y: cellFrame.minY + (cellFrame.height - 15) * 0.5,
+      width: max(0, cellFrame.width - insetX * 2),
+      height: 15
+    )
+    let para = NSMutableParagraphStyle()
+    para.alignment = alignment
+    para.lineBreakMode = .byTruncatingTail
+    var styledAttrs = attrs
+    styledAttrs[.paragraphStyle] = para
+    (stringValue as NSString).draw(in: textRect, withAttributes: styledAttrs)
+  }
+}
+
+final class LogTableHeaderView: NSTableHeaderView {
+  override func draw(_ dirtyRect: NSRect) {
+    LogloomTheme.nsCanvas.setFill()
+    bounds.fill()
+    super.draw(dirtyRect)
+    LogloomTheme.nsBorder.setFill()
+    NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
+  }
+}
+
 struct VirtualizedLogTableView: NSViewRepresentable {
   let viewportStore: ViewportStore
   let viewportRevision: UInt64
+  let isStructuredMode: Bool
   let isolatedTraceID: String?
   @Binding var selectedLineNumber: UInt64?
   let scrollToSelectionTrigger: UInt64
   let onTraceIDClick: (String) -> Void
   let onClearTraceIsolation: () -> Void
+  let onObserveStructured: () -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
       viewportStore: viewportStore,
+      isStructuredMode: isStructuredMode,
       isolatedTraceID: isolatedTraceID,
       selectedLineNumber: $selectedLineNumber,
       onTraceIDClick: onTraceIDClick,
-      onClearTraceIsolation: onClearTraceIsolation
+      onClearTraceIsolation: onClearTraceIsolation,
+      onObserveStructured: onObserveStructured
     )
   }
 
@@ -28,12 +93,13 @@ struct VirtualizedLogTableView: NSViewRepresentable {
     scrollView.autohidesScrollers = true
     scrollView.borderType = .noBorder
     scrollView.drawsBackground = true
-    scrollView.backgroundColor = .textBackgroundColor
+    scrollView.backgroundColor = LogloomTheme.nsCanvas
 
     let tableView = NSTableView()
     tableView.style = .plain
     tableView.usesAlternatingRowBackgroundColors = false
-    tableView.rowHeight = 20
+    tableView.backgroundColor = LogloomTheme.nsCanvas
+    tableView.rowHeight = 28
     tableView.usesAutomaticRowHeights = false
     tableView.intercellSpacing = NSSize(width: 8, height: 0)
     tableView.allowsMultipleSelection = false
@@ -42,16 +108,20 @@ struct VirtualizedLogTableView: NSViewRepresentable {
     tableView.allowsColumnReordering = false
     tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
     tableView.gridStyleMask = []
-    tableView.headerView = NSTableHeaderView()
+    tableView.selectionHighlightStyle = .regular
+    tableView.headerView = LogTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 26))
 
     for spec in ColumnSpec.allCases {
       let column = NSTableColumn(identifier: spec.identifier)
-      column.title = spec.title
+      let headerCell = LogTableHeaderCell(textCell: spec.title(structured: isStructuredMode))
+      headerCell.alignment = spec.alignment
+      column.headerCell = headerCell
+      column.title = spec.title(structured: isStructuredMode)
       column.width = spec.defaultWidth
       column.minWidth = spec.minWidth
       column.maxWidth = spec.maxWidth
       column.resizingMask = spec.resizingMask
-      column.headerCell.alignment = spec.alignment
+      column.isHidden = spec.isStructuredOnly && !isStructuredMode
       tableView.addTableColumn(column)
     }
 
@@ -81,12 +151,20 @@ struct VirtualizedLogTableView: NSViewRepresentable {
     coordinator.isolatedTraceID = isolatedTraceID
     coordinator.onTraceIDClick = onTraceIDClick
     coordinator.onClearTraceIsolation = onClearTraceIsolation
+    coordinator.onObserveStructured = onObserveStructured
 
     guard let tableView = coordinator.tableView else { return }
 
-    if coordinator.lastRevision != viewportRevision {
+    let structureChanged = coordinator.isStructuredMode != isStructuredMode
+    coordinator.isStructuredMode = isStructuredMode
+    if structureChanged {
+      applyColumnVisibility(tableView: tableView, structured: isStructuredMode)
+    }
+
+    if coordinator.lastRevision != viewportRevision || structureChanged {
       let modeChanged = coordinator.lastMode != viewportStore.mode
-      let shouldScrollToSelection = modeChanged || coordinator.lastScrollTrigger != scrollToSelectionTrigger
+      let shouldScrollToSelection =
+        modeChanged || coordinator.lastScrollTrigger != scrollToSelectionTrigger
       coordinator.lastRevision = viewportRevision
       coordinator.lastMode = viewportStore.mode
       coordinator.lastScrollTrigger = scrollToSelectionTrigger
@@ -125,14 +203,17 @@ struct VirtualizedLogTableView: NSViewRepresentable {
     }
   }
 
-  private func syncExternalSelection(tableView: NSTableView, coordinator: Coordinator) {
-    let desiredRow: Int?
-    if let selectedLineNumber {
-      desiredRow = viewportStore.rowIndex(forLineNumber: selectedLineNumber)
-    } else {
-      desiredRow = nil
+  private func applyColumnVisibility(tableView: NSTableView, structured: Bool) {
+    for column in tableView.tableColumns {
+      guard let spec = ColumnSpec(identifier: column.identifier) else { continue }
+      column.isHidden = spec.isStructuredOnly && !structured
+      column.title = spec.title(structured: structured)
     }
+    tableView.sizeLastColumnToFit()
+  }
 
+  private func syncExternalSelection(tableView: NSTableView, coordinator: Coordinator) {
+    let desiredRow: Int? = selectedLineNumber.flatMap { viewportStore.rowIndex(forLineNumber: $0) }
     let scrollRequested = coordinator.lastScrollTrigger != scrollToSelectionTrigger
     let currentRow = tableView.selectedRow >= 0 ? tableView.selectedRow : nil
     guard currentRow != desiredRow || scrollRequested else { return }
@@ -167,42 +248,49 @@ struct VirtualizedLogTableView: NSViewRepresentable {
       }
     }
 
-    var title: String {
+    var isStructuredOnly: Bool {
       switch self {
-      case .lineNumber: return "#"
-      case .timestamp: return "Timestamp"
+      case .timestamp, .level, .traceID: return true
+      case .lineNumber, .content: return false
+      }
+    }
+
+    func title(structured: Bool) -> String {
+      switch self {
+      case .lineNumber: return "Line"
+      case .timestamp: return "Time · UTC"
       case .level: return "Level"
       case .traceID: return "Trace ID"
-      case .content: return "Content"
+      case .content: return structured ? "Message" : "Content"
       }
     }
 
     var defaultWidth: CGFloat {
       switch self {
-      case .lineNumber: return 68
-      case .timestamp: return 170
-      case .level: return 62
-      case .traceID: return 145
-      case .content: return 540
+      case .lineNumber: return 46
+      case .timestamp: return 96
+      case .level: return 56
+      case .traceID: return 92
+      case .content: return 440
       }
     }
 
     var minWidth: CGFloat {
       switch self {
-      case .lineNumber: return 48
-      case .timestamp: return 110
-      case .level: return 50
-      case .traceID: return 90
-      case .content: return 220
+      case .lineNumber: return 40
+      case .timestamp: return 86
+      case .level: return 48
+      case .traceID: return 76
+      case .content: return 160
       }
     }
 
     var maxWidth: CGFloat {
       switch self {
-      case .lineNumber: return 110
-      case .timestamp: return 280
+      case .lineNumber: return 96
+      case .timestamp: return 220
       case .level: return 96
-      case .traceID: return 320
+      case .traceID: return 260
       case .content: return 10_000
       }
     }
@@ -233,37 +321,48 @@ struct VirtualizedLogTableView: NSViewRepresentable {
   @MainActor
   final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     var viewportStore: ViewportStore
+    var isStructuredMode: Bool
     var isolatedTraceID: String?
     var selectedLineNumberBinding: Binding<UInt64?>
     var onTraceIDClick: (String) -> Void
     var onClearTraceIsolation: () -> Void
+    var onObserveStructured: () -> Void
     weak var tableView: NSTableView?
     weak var scrollView: NSScrollView?
     var lastRevision: UInt64 = 0
     var lastMode: ViewportMode = .fullFile
     var lastScrollTrigger: UInt64 = 0
     var isProgrammaticUpdate = false
+    private var scheduledStructuredNotify = false
 
     private let lineNumberFont = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
     private let monoRegularFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    private let monoMediumFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+    private let monoLevelFont = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .semibold)
 
     init(
       viewportStore: ViewportStore,
+      isStructuredMode: Bool,
       isolatedTraceID: String?,
       selectedLineNumber: Binding<UInt64?>,
       onTraceIDClick: @escaping (String) -> Void,
-      onClearTraceIsolation: @escaping () -> Void
+      onClearTraceIsolation: @escaping () -> Void,
+      onObserveStructured: @escaping () -> Void
     ) {
       self.viewportStore = viewportStore
+      self.isStructuredMode = isStructuredMode
       self.isolatedTraceID = isolatedTraceID
       self.selectedLineNumberBinding = selectedLineNumber
       self.onTraceIDClick = onTraceIDClick
       self.onClearTraceIsolation = onClearTraceIsolation
+      self.onObserveStructured = onObserveStructured
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
       viewportStore.rowCount
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+      CopperAccentTableRowView()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int)
@@ -283,41 +382,53 @@ struct VirtualizedLogTableView: NSViewRepresentable {
         return cellView
       }
 
+      if !isStructuredMode && line.hasStructuredFields && !scheduledStructuredNotify {
+        scheduledStructuredNotify = true
+        Task { @MainActor [weak self] in
+          guard let self else { return }
+          self.scheduledStructuredNotify = false
+          self.onObserveStructured()
+        }
+      }
+
       switch columnSpec {
       case .lineNumber:
         textField.font = lineNumberFont
-        textField.textColor = .secondaryLabelColor
+        textField.textColor = LogloomTheme.nsTextMuted
         textField.stringValue = "\(line.lineNumber)"
 
       case .timestamp:
         textField.font = lineNumberFont
-        textField.textColor = .secondaryLabelColor
-        textField.stringValue = line.fields.timestamp ?? ""
+        textField.textColor = LogloomTheme.nsTextMuted
+        textField.stringValue = JSONFormatter.formatTimestampForTable(line.fields.timestamp)
 
       case .level:
-        textField.font = monoMediumFont
-        let levelText = line.fields.level ?? ""
+        textField.font = monoLevelFont
+        let levelText = (line.fields.level ?? "").uppercased()
         textField.stringValue = levelText
-        textField.textColor = levelColor(for: levelText)
+        textField.textColor = LogloomTheme.nsLevelColor(for: levelText)
 
       case .traceID:
         textField.font = monoRegularFont
         let traceText = line.fields.traceID ?? ""
         textField.stringValue = traceText
         if !traceText.isEmpty {
-          textField.textColor = (traceText == isolatedTraceID) ? .controlAccentColor : .linkColor
+          textField.textColor =
+            (traceText == isolatedTraceID)
+            ? LogloomTheme.nsCopper
+            : LogloomTheme.nsTextSoft
         } else {
-          textField.textColor = .secondaryLabelColor
+          textField.textColor = LogloomTheme.nsTextMuted
         }
 
       case .content:
         textField.font = monoRegularFont
         if line.exceedsMaxLength {
-          textField.textColor = .secondaryLabelColor
+          textField.textColor = LogloomTheme.nsTextMuted
           textField.stringValue = "[oversized line: \(line.byteLength) bytes skipped]"
         } else {
-          textField.textColor = .labelColor
-          textField.stringValue = line.content
+          textField.textColor = LogloomTheme.nsTextPrimary
+          textField.stringValue = isStructuredMode ? line.displayMessage : line.content
         }
       }
 
@@ -421,19 +532,6 @@ struct VirtualizedLogTableView: NSViewRepresentable {
       ])
 
       return cell
-    }
-
-    private func levelColor(for level: String) -> NSColor {
-      switch level.uppercased() {
-      case "ERROR", "FATAL", "CRITICAL":
-        return .systemRed
-      case "WARN", "WARNING":
-        return .systemOrange
-      case "INFO":
-        return .systemBlue
-      default:
-        return .secondaryLabelColor
-      }
     }
   }
 }
