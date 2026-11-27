@@ -90,17 +90,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct LogloomDesktopApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @StateObject private var model = AppModel()
+  @StateObject private var updateManager = UpdateManager()
 
   var body: some Scene {
     WindowGroup("Logloom") {
-      ContentView(model: model)
+      ContentView(model: model, updateManager: updateManager)
         .onAppear {
           appDelegate.attach(model: model)
+          updateManager.checkOnLaunchIfNeeded()
         }
     }
     .defaultSize(width: 1120, height: 680)
     .windowStyle(.hiddenTitleBar)
     .commands {
+      CommandGroup(after: .appInfo) {
+        Button("Check for Updates…") {
+          updateManager.checkForUpdates(userInitiated: true)
+        }
+        .disabled(updateManager.isChecking)
+      }
       CommandGroup(replacing: .newItem) {
         Button("Open...") {
           model.openPanel()

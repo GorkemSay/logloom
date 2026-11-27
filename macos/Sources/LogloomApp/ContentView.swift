@@ -32,12 +32,17 @@ private struct WindowTitleSyncView: NSViewRepresentable {
 
 struct ContentView: View {
   @ObservedObject var model: AppModel
+  @ObservedObject var updateManager: UpdateManager
   @State private var isDropTargeted = false
   @FocusState private var isSearchFieldFocused: Bool
 
   var body: some View {
     VStack(spacing: 0) {
       topChromeBar
+
+      if updateManager.availableReleaseForBanner != nil {
+        UpdateBannerView(updateManager: updateManager)
+      }
 
       ZStack {
         if model.hasOpenFile {
@@ -80,6 +85,9 @@ struct ContentView: View {
     }
     .sheet(isPresented: $model.isJumpToLinePresented) {
       JumpToLineSheet(model: model)
+    }
+    .sheet(isPresented: $updateManager.isSheetPresented) {
+      UpdateSheetView(updateManager: updateManager)
     }
     .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
     .overlay {
