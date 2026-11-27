@@ -6,8 +6,8 @@
 ## Current Status
 
 - **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring
-- **Next Step:** `Step 3.3 — Flatten core/c_api.cpp & core/jsonl_extractor.cpp (exception boundary helper & shallow JSON helpers)`
-- **Last Completed Step:** `Step 3.2 — Modularize cli/main.cpp (SRP command modules & declarative option parser)`
+- **Next Step:** `Step 3.4 — Deduplicate Parallel Search Engine (core/search_engine.cpp & core/mmap_reader.cpp shared pipeline)`
+- **Last Completed Step:** `Step 3.3 — Flatten core/c_api.cpp & core/jsonl_extractor.cpp (exception boundary helper & shallow JSON helpers)`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
 ---
@@ -35,7 +35,7 @@
 ### Phase 3 — IDE Diagnostics & SOLID Refactoring
 - [x] **Step 3.1** — IDE Compilation Database Configuration (`.clangd` & `.vscode`) to eliminate 193 false-positive Problems
 - [x] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
-- [ ] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
+- [x] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
 - [ ] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
 - [ ] **Step 3.5** — Refactor `macos/` Swift Layer (`CStringArena`, split `AppModel` controllers, modular SwiftUI views)
 
@@ -313,6 +313,19 @@
   - `cmake --build --preset release && ctest --preset release --output-on-failure` (`32/32` passed, `0` warnings).
   - `clangd --check` on all `cli/*.cpp` and `cli/*.hpp` files: `0 errors/warnings`.
 - **Next:** Execute **Step 3.3** (`core/c_api.cpp` & `core/jsonl_extractor.cpp` flattening) after user approval.
+- **Spec Drift / Follow-ups:** None.
+
+### 2026-11-27 — Step 3.3: Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp`
+- **Files Touched:** `core/c_api.cpp`, `core/jsonl_extractor.cpp`, `PROGRESS.md`.
+- **Summary:**
+  - Refactored `core/c_api.cpp` with shared internal helpers (`invoke_c_api`, `copy_lines_to_c_list`, `fill_index_stats`, `fill_search_stats`, `to_cpp_query`, `copy_optional_field`), removing duplicated `try/catch` boilerplate, calloc/fill loops, and nested query/field branches with zero C ABI header changes.
+  - Refactored `core/jsonl_extractor.cpp` by extracting `scan_escape`, `consume_digits`, `push_container_frame`, `skip_scalar_token`, and `parse_top_level_value`, cutting maximum indentation depth from `37` down to `12`.
+- **Verification:**
+  - `cmake --build --preset debug-asan && ctest --preset debug-asan --output-on-failure` (`32/32` passed, `0` warnings).
+  - `cmake --build --preset release && ctest --preset release --output-on-failure` (`32/32` passed, `0` warnings).
+  - `swift test --package-path macos` (`8/8` `LogloomCoreTests` passed, `0` warnings).
+  - `clangd --check` on `core/c_api.cpp` and `core/jsonl_extractor.cpp`: `0 errors/warnings`.
+- **Next:** Execute **Step 3.4** (`core/search_engine.cpp` & `core/mmap_reader.cpp` parallel pipeline deduplication) after user approval.
 - **Spec Drift / Follow-ups:** None.
 
 <!--

@@ -55,6 +55,34 @@ void clear_error(const logloom_file_t* file) noexcept {
   }
 }
 
+template <typename Fn, typename Cleanup>
+logloom_status_t invoke_c_api(
+    const logloom_file_t* file,
+    const char* fn_name,
+    Fn&& fn,
+    Cleanup&& on_error) noexcept {
+  try {
+    clear_error(file);
+    return fn();
+  } catch (const std::exception& ex) {
+    on_error();
+    set_error(file, ex.what());
+    return LOGLOOM_ERR_INTERNAL;
+  } catch (...) {
+    on_error();
+    set_error(file, std::string("unknown internal error in ") + fn_name);
+    return LOGLOOM_ERR_INTERNAL;
+  }
+}
+
+template <typename Fn>
+logloom_status_t invoke_c_api(
+    const logloom_file_t* file,
+    const char* fn_name,
+    Fn&& fn) noexcept {
+  return invoke_c_api(file, fn_name, static_cast<Fn&&>(fn), []() noexcept {});
+}
+
 char* dup_string(std::string_view sv) noexcept {
   char* buf = static_cast<char*>(std::malloc(sv.size() + 1));
   if (buf == nullptr) {
@@ -83,6 +111,34 @@ bool fill_c_line(const logloom::IndexedLine& src, logloom_line_t& dst) noexcept 
   return true;
 }
 
+logloom_status_t copy_lines_to_c_list(
+    const logloom_file_t* file,
+    const std::vector<logloom::IndexedLine>& rows,
+    logloom_line_list_t* out_list) noexcept {
+  if (rows.empty()) {
+    return LOGLOOM_OK;
+  }
+
+  auto* arr = static_cast<logloom_line_t*>(
+      std::calloc(rows.size(), sizeof(logloom_line_t)));
+  if (arr == nullptr) {
+    set_error(file, "out of memory allocating line list");
+    return LOGLOOM_ERR_INTERNAL;
+  }
+
+  out_list->lines = arr;
+  out_list->count = rows.size();
+
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    if (!fill_c_line(rows[i], arr[i])) {
+      logloom_line_list_free(out_list);
+      set_error(file, "out of memory allocating line content");
+      return LOGLOOM_ERR_INTERNAL;
+    }
+  }
+  return LOGLOOM_OK;
+}
+
 logloom_line_kind_t to_c_kind(logloom::LineKind kind) noexcept {
   switch (kind) {
     case logloom::LineKind::JsonObject:
@@ -93,6 +149,86 @@ logloom_line_kind_t to_c_kind(logloom::LineKind kind) noexcept {
     default:
       return LOGLOOM_LINE_PLAIN_TEXT;
   }
+}
+
+void fill_index_stats(
+    const logloom::LineIndex& built,
+    logloom_index_stats_t* out_stats) noexcept {
+  if (out_stats == nullptr) {
+    return;
+  }
+  const auto& st = built.stats();
+  out_stats->total_lines = st.total_lines;
+  out_stats->oversized_lines = st.oversized_lines;
+  out_stats->bytes_read = st.bytes_read;
+  out_stats->stride = built.stride();
+  out_stats->index_memory_bytes = built.memory_bytes();
+  out_stats->had_utf8_bom = st.had_utf8_bom;
+  out_stats->has_truncated_final_line = st.has_truncated_final_line;
+}
+
+void fill_search_stats(
+    const logloom::SearchStats& stats,
+    logloom_search_stats_t* out_stats) noexcept {
+  if (out_stats == nullptr) {
+    return;
+  }
+  out_stats->lines_scanned = stats.lines_scanned;
+  out_stats->matches_found = stats.matches_found;
+  out_stats->json_lines = stats.json_lines;
+  out_stats->plain_text_lines = stats.plain_text_lines;
+  out_stats->malformed_lines = stats.malformed_lines;
+  out_stats->oversized_lines = stats.oversized_lines;
+  out_stats->truncated_lines = stats.truncated_lines;
+  out_stats->has_truncated_final_line = stats.has_truncated_final_line;
+  out_stats->cancelled = stats.cancelled;
+  out_stats->limit_reached = stats.limit_reached;
+}
+
+logloom::SearchQuery to_cpp_query(
+    const logloom_search_query_t* query,
+    std::size_t& out_threads) {
+  out_threads = 0;
+  logloom::SearchQuery cpp_query;
+  if (query == nullptr) {
+    return cpp_query;
+  }
+  if (query->trace_id != nullptr) {
+    cpp_query.trace_id = std::string(query->trace_id);
+  }
+  if (query->trace_key != nullptr && query->trace_key[0] != '\0') {
+    cpp_query.trace_key = std::string(query->trace_key);
+  }
+  if (query->level != nullptr) {
+    cpp_query.level = std::string(query->level);
+  }
+  if (query->level_key != nullptr && query->level_key[0] != '\0') {
+    cpp_query.level_key = std::string(query->level_key);
+  }
+  if (query->timestamp_key != nullptr && query->timestamp_key[0] != '\0') {
+    cpp_query.timestamp_key = std::string(query->timestamp_key);
+  }
+  if (query->text_query != nullptr) {
+    cpp_query.text_query = std::string(query->text_query);
+  }
+  cpp_query.case_sensitive = query->case_sensitive;
+  cpp_query.is_regex = query->is_regex;
+  cpp_query.limit = query->limit;
+  out_threads = query->num_threads;
+  return cpp_query;
+}
+
+void copy_optional_field(
+    const std::optional<std::string_view>& field,
+    std::string& buf,
+    const char*& out_ptr,
+    size_t& out_len) {
+  if (!field.has_value()) {
+    return;
+  }
+  buf.assign(*field);
+  out_ptr = buf.c_str();
+  out_len = buf.size();
 }
 
 } // namespace
@@ -162,7 +298,7 @@ logloom_status_t logloom_file_open(const char* path, logloom_file_t** out_file) 
     return LOGLOOM_ERR_INVALID_ARG;
   }
 
-  try {
+  return invoke_c_api(nullptr, "logloom_file_open", [&]() -> logloom_status_t {
     std::error_code ec;
     auto posix = logloom::PosixFile::open_read_only(path, ec);
     if (!posix.has_value()) {
@@ -175,13 +311,7 @@ logloom_status_t logloom_file_open(const char* path, logloom_file_t** out_file) 
     *out_file = wrapper.release();
     clear_error(*out_file);
     return LOGLOOM_OK;
-  } catch (const std::exception& ex) {
-    set_error(nullptr, ex.what());
-    return LOGLOOM_ERR_INTERNAL;
-  } catch (...) {
-    set_error(nullptr, "unknown internal error in logloom_file_open");
-    return LOGLOOM_ERR_INTERNAL;
-  }
+  });
 }
 
 void logloom_file_close(logloom_file_t* file) {
@@ -206,9 +336,7 @@ logloom_status_t logloom_file_build_index(
     return LOGLOOM_ERR_INVALID_ARG;
   }
 
-  try {
-    clear_error(file);
-    std::error_code ec;
+  return invoke_c_api(file, "logloom_file_build_index", [&]() -> logloom_status_t {
     logloom::IndexProgressCallback cpp_progress;
     if (progress_cb != nullptr) {
       cpp_progress = [progress_cb, user_data](
@@ -222,6 +350,7 @@ logloom_status_t logloom_file_build_index(
     const std::atomic<bool>* cancel_ptr =
         (cancel_token != nullptr) ? &cancel_token->cancelled : nullptr;
 
+    std::error_code ec;
     auto built = logloom::LineIndex::build(
         file->handle, ec, logloom::LineIndexOptions{}, cpp_progress, cancel_ptr);
     if (!built.has_value()) {
@@ -233,27 +362,11 @@ logloom_status_t logloom_file_build_index(
       return LOGLOOM_ERR_IO;
     }
 
-    if (out_stats != nullptr) {
-      const auto& st = built->stats();
-      out_stats->total_lines = st.total_lines;
-      out_stats->oversized_lines = st.oversized_lines;
-      out_stats->bytes_read = st.bytes_read;
-      out_stats->stride = built->stride();
-      out_stats->index_memory_bytes = built->memory_bytes();
-      out_stats->had_utf8_bom = st.had_utf8_bom;
-      out_stats->has_truncated_final_line = st.has_truncated_final_line;
-    }
-
+    fill_index_stats(*built, out_stats);
     std::unique_lock<std::shared_mutex> lock(file->index_mutex);
     file->index = std::move(*built);
     return LOGLOOM_OK;
-  } catch (const std::exception& ex) {
-    set_error(file, ex.what());
-    return LOGLOOM_ERR_INTERNAL;
-  } catch (...) {
-    set_error(file, "unknown internal error in logloom_file_build_index");
-    return LOGLOOM_ERR_INTERNAL;
-  }
+  });
 }
 
 bool logloom_file_is_indexed(const logloom_file_t* file) {
@@ -287,45 +400,35 @@ logloom_status_t logloom_file_read_line(
     return LOGLOOM_ERR_INVALID_ARG;
   }
 
-  try {
-    clear_error(file);
-    std::shared_lock<std::shared_mutex> lock(file->index_mutex);
-    if (!file->index.has_value()) {
-      set_error(file, "file has not been indexed yet");
-      return LOGLOOM_ERR_NOT_INDEXED;
-    }
+  return invoke_c_api(
+      file,
+      "logloom_file_read_line",
+      [&]() -> logloom_status_t {
+        std::shared_lock<std::shared_mutex> lock(file->index_mutex);
+        if (!file->index.has_value()) {
+          set_error(file, "file has not been indexed yet");
+          return LOGLOOM_ERR_NOT_INDEXED;
+        }
+        if (line_number == 0 || line_number > file->index->line_count()) {
+          set_error(file, "line number out of range");
+          return LOGLOOM_ERR_OUT_OF_RANGE;
+        }
 
-    if (line_number == 0 || line_number > file->index->line_count()) {
-      set_error(file, "line number out of range");
-      return LOGLOOM_ERR_OUT_OF_RANGE;
-    }
+        logloom::IndexedLine line{};
+        std::error_code ec;
+        if (!file->index->read_line(file->handle, line_number, line, ec)) {
+          set_error(file, ec ? ec.message() : "line number out of range");
+          return ec ? LOGLOOM_ERR_IO : LOGLOOM_ERR_OUT_OF_RANGE;
+        }
 
-    logloom::IndexedLine line{};
-    std::error_code ec;
-    if (!file->index->read_line(file->handle, line_number, line, ec)) {
-      if (ec) {
-        set_error(file, ec.message());
-        return LOGLOOM_ERR_IO;
-      }
-      set_error(file, "line number out of range");
-      return LOGLOOM_ERR_OUT_OF_RANGE;
-    }
-
-    if (!fill_c_line(line, *out_line)) {
-      logloom_line_free(out_line);
-      set_error(file, "out of memory allocating line content");
-      return LOGLOOM_ERR_INTERNAL;
-    }
-    return LOGLOOM_OK;
-  } catch (const std::exception& ex) {
-    logloom_line_free(out_line);
-    set_error(file, ex.what());
-    return LOGLOOM_ERR_INTERNAL;
-  } catch (...) {
-    logloom_line_free(out_line);
-    set_error(file, "unknown internal error in logloom_file_read_line");
-    return LOGLOOM_ERR_INTERNAL;
-  }
+        if (!fill_c_line(line, *out_line)) {
+          logloom_line_free(out_line);
+          set_error(file, "out of memory allocating line content");
+          return LOGLOOM_ERR_INTERNAL;
+        }
+        return LOGLOOM_OK;
+      },
+      [out_line]() noexcept { logloom_line_free(out_line); });
 }
 
 void logloom_line_free(logloom_line_t* line) {
@@ -351,60 +454,30 @@ logloom_status_t logloom_file_read_context(
     return LOGLOOM_ERR_INVALID_ARG;
   }
 
-  try {
-    clear_error(file);
-    std::shared_lock<std::shared_mutex> lock(file->index_mutex);
-    if (!file->index.has_value()) {
-      set_error(file, "file has not been indexed yet");
-      return LOGLOOM_ERR_NOT_INDEXED;
-    }
+  return invoke_c_api(
+      file,
+      "logloom_file_read_context",
+      [&]() -> logloom_status_t {
+        std::shared_lock<std::shared_mutex> lock(file->index_mutex);
+        if (!file->index.has_value()) {
+          set_error(file, "file has not been indexed yet");
+          return LOGLOOM_ERR_NOT_INDEXED;
+        }
+        if (center_line == 0 || center_line > file->index->line_count()) {
+          set_error(file, "center line out of range");
+          return LOGLOOM_ERR_OUT_OF_RANGE;
+        }
 
-    if (center_line == 0 || center_line > file->index->line_count()) {
-      set_error(file, "center line out of range");
-      return LOGLOOM_ERR_OUT_OF_RANGE;
-    }
+        std::vector<logloom::IndexedLine> ctx;
+        std::error_code ec;
+        if (!file->index->read_context(file->handle, center_line, before, after, ctx, ec)) {
+          set_error(file, ec ? ec.message() : "center line out of range");
+          return ec ? LOGLOOM_ERR_IO : LOGLOOM_ERR_OUT_OF_RANGE;
+        }
 
-    std::vector<logloom::IndexedLine> ctx;
-    std::error_code ec;
-    if (!file->index->read_context(file->handle, center_line, before, after, ctx, ec)) {
-      if (ec) {
-        set_error(file, ec.message());
-        return LOGLOOM_ERR_IO;
-      }
-      set_error(file, "center line out of range");
-      return LOGLOOM_ERR_OUT_OF_RANGE;
-    }
-
-    if (ctx.empty()) {
-      return LOGLOOM_OK;
-    }
-
-    auto* arr = static_cast<logloom_line_t*>(
-        std::calloc(ctx.size(), sizeof(logloom_line_t)));
-    if (arr == nullptr) {
-      set_error(file, "out of memory allocating context lines");
-      return LOGLOOM_ERR_INTERNAL;
-    }
-    out_list->lines = arr;
-    out_list->count = ctx.size();
-
-    for (std::size_t i = 0; i < ctx.size(); ++i) {
-      if (!fill_c_line(ctx[i], arr[i])) {
-        logloom_line_list_free(out_list);
-        set_error(file, "out of memory allocating context line content");
-        return LOGLOOM_ERR_INTERNAL;
-      }
-    }
-    return LOGLOOM_OK;
-  } catch (const std::exception& ex) {
-    logloom_line_list_free(out_list);
-    set_error(file, ex.what());
-    return LOGLOOM_ERR_INTERNAL;
-  } catch (...) {
-    logloom_line_list_free(out_list);
-    set_error(file, "unknown internal error in logloom_file_read_context");
-    return LOGLOOM_ERR_INTERNAL;
-  }
+        return copy_lines_to_c_list(file, ctx, out_list);
+      },
+      [out_list]() noexcept { logloom_line_list_free(out_list); });
 }
 
 logloom_status_t logloom_file_read_head(
@@ -420,70 +493,46 @@ logloom_status_t logloom_file_read_head(
     return LOGLOOM_ERR_INVALID_ARG;
   }
 
-  try {
-    clear_error(file);
-    if (max_lines == 0) {
-      return LOGLOOM_OK;
-    }
+  return invoke_c_api(
+      file,
+      "logloom_file_read_head",
+      [&]() -> logloom_status_t {
+        if (max_lines == 0) {
+          return LOGLOOM_OK;
+        }
 
-    logloom::ChunkedLineReader reader(
-        file->handle,
-        logloom::LineReaderOptions{
-            .chunk_size = 64 * 1024,
-            .strip_utf8_bom = true,
-            .start_offset = 0,
-        });
+        logloom::ChunkedLineReader reader(
+            file->handle,
+            logloom::LineReaderOptions{
+                .chunk_size = 64 * 1024,
+                .strip_utf8_bom = true,
+                .start_offset = 0,
+            });
 
-    std::vector<logloom::IndexedLine> rows;
-    rows.reserve(std::min<std::size_t>(max_lines, 512U));
+        std::vector<logloom::IndexedLine> rows;
+        rows.reserve(std::min<std::size_t>(max_lines, 512U));
 
-    logloom::LineView view{};
-    std::error_code ec;
-    while (rows.size() < max_lines && reader.next_line(view, ec)) {
-      rows.push_back(logloom::IndexedLine{
-          .line_number = view.line_number,
-          .byte_offset = view.byte_offset,
-          .byte_length = view.byte_length,
-          .content = std::string(view.content),
-          .has_crlf = view.has_crlf,
-          .is_truncated_eof = view.is_truncated_eof,
-          .exceeds_max_length = view.exceeds_max_length,
-      });
-    }
-    if (ec) {
-      set_error(file, ec.message());
-      return LOGLOOM_ERR_IO;
-    }
-    if (rows.empty()) {
-      return LOGLOOM_OK;
-    }
+        logloom::LineView view{};
+        std::error_code ec;
+        while (rows.size() < max_lines && reader.next_line(view, ec)) {
+          rows.push_back(logloom::IndexedLine{
+              .line_number = view.line_number,
+              .byte_offset = view.byte_offset,
+              .byte_length = view.byte_length,
+              .content = std::string(view.content),
+              .has_crlf = view.has_crlf,
+              .is_truncated_eof = view.is_truncated_eof,
+              .exceeds_max_length = view.exceeds_max_length,
+          });
+        }
+        if (ec) {
+          set_error(file, ec.message());
+          return LOGLOOM_ERR_IO;
+        }
 
-    auto* arr = static_cast<logloom_line_t*>(
-        std::calloc(rows.size(), sizeof(logloom_line_t)));
-    if (arr == nullptr) {
-      set_error(file, "out of memory allocating head lines");
-      return LOGLOOM_ERR_INTERNAL;
-    }
-    out_list->lines = arr;
-    out_list->count = rows.size();
-
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-      if (!fill_c_line(rows[i], arr[i])) {
-        logloom_line_list_free(out_list);
-        set_error(file, "out of memory allocating head line content");
-        return LOGLOOM_ERR_INTERNAL;
-      }
-    }
-    return LOGLOOM_OK;
-  } catch (const std::exception& ex) {
-    logloom_line_list_free(out_list);
-    set_error(file, ex.what());
-    return LOGLOOM_ERR_INTERNAL;
-  } catch (...) {
-    logloom_line_list_free(out_list);
-    set_error(file, "unknown internal error in logloom_file_read_head");
-    return LOGLOOM_ERR_INTERNAL;
-  }
+        return copy_lines_to_c_list(file, rows, out_list);
+      },
+      [out_list]() noexcept { logloom_line_list_free(out_list); });
 }
 
 void logloom_line_list_free(logloom_line_list_t* list) {
@@ -577,36 +626,9 @@ logloom_status_t logloom_file_search(
     return LOGLOOM_ERR_INVALID_ARG;
   }
 
-  try {
-    clear_error(file);
-    logloom::SearchQuery cpp_query;
+  return invoke_c_api(file, "logloom_file_search", [&]() -> logloom_status_t {
     std::size_t num_threads = 0;
-
-    if (query != nullptr) {
-      if (query->trace_id != nullptr) {
-        cpp_query.trace_id = std::string(query->trace_id);
-      }
-      if (query->trace_key != nullptr && query->trace_key[0] != '\0') {
-        cpp_query.trace_key = std::string(query->trace_key);
-      }
-      if (query->level != nullptr) {
-        cpp_query.level = std::string(query->level);
-      }
-      if (query->level_key != nullptr && query->level_key[0] != '\0') {
-        cpp_query.level_key = std::string(query->level_key);
-      }
-      if (query->timestamp_key != nullptr && query->timestamp_key[0] != '\0') {
-        cpp_query.timestamp_key = std::string(query->timestamp_key);
-      }
-      if (query->text_query != nullptr) {
-        cpp_query.text_query = std::string(query->text_query);
-      }
-      cpp_query.case_sensitive = query->case_sensitive;
-      cpp_query.is_regex = query->is_regex;
-      cpp_query.limit = query->limit;
-      num_threads = query->num_threads;
-    }
-
+    const logloom::SearchQuery cpp_query = to_cpp_query(query, num_threads);
     const std::atomic<bool>* cancel_ptr =
         (cancel_token != nullptr) ? &cancel_token->cancelled : nullptr;
 
@@ -630,21 +652,9 @@ logloom_status_t logloom_file_search(
         cm.has_crlf = m.has_crlf;
         cm.is_truncated_eof = m.is_truncated_eof;
 
-        if (m.fields.timestamp.has_value()) {
-          ts_buf.assign(*m.fields.timestamp);
-          cm.timestamp = ts_buf.c_str();
-          cm.timestamp_length = ts_buf.size();
-        }
-        if (m.fields.level.has_value()) {
-          level_buf.assign(*m.fields.level);
-          cm.level = level_buf.c_str();
-          cm.level_length = level_buf.size();
-        }
-        if (m.fields.trace_id.has_value()) {
-          trace_buf.assign(*m.fields.trace_id);
-          cm.trace_id = trace_buf.c_str();
-          cm.trace_id_length = trace_buf.size();
-        }
+        copy_optional_field(m.fields.timestamp, ts_buf, cm.timestamp, cm.timestamp_length);
+        copy_optional_field(m.fields.level, level_buf, cm.level, cm.level_length);
+        copy_optional_field(m.fields.trace_id, trace_buf, cm.trace_id, cm.trace_id_length);
 
         return match_cb(&cm, user_data);
       };
@@ -659,18 +669,7 @@ logloom_status_t logloom_file_search(
         logloom::ParallelSearchOptions{.num_threads = num_threads},
         cancel_ptr);
 
-    if (out_stats != nullptr) {
-      out_stats->lines_scanned = stats.lines_scanned;
-      out_stats->matches_found = stats.matches_found;
-      out_stats->json_lines = stats.json_lines;
-      out_stats->plain_text_lines = stats.plain_text_lines;
-      out_stats->malformed_lines = stats.malformed_lines;
-      out_stats->oversized_lines = stats.oversized_lines;
-      out_stats->truncated_lines = stats.truncated_lines;
-      out_stats->has_truncated_final_line = stats.has_truncated_final_line;
-      out_stats->cancelled = stats.cancelled;
-      out_stats->limit_reached = stats.limit_reached;
-    }
+    fill_search_stats(stats, out_stats);
 
     if (ec) {
       if (ec == std::errc::invalid_argument) {
@@ -685,15 +684,8 @@ logloom_status_t logloom_file_search(
       set_error(file, "search cancelled");
       return LOGLOOM_ERR_CANCELLED;
     }
-
     return LOGLOOM_OK;
-  } catch (const std::exception& ex) {
-    set_error(file, ex.what());
-    return LOGLOOM_ERR_INTERNAL;
-  } catch (...) {
-    set_error(file, "unknown internal error in logloom_file_search");
-    return LOGLOOM_ERR_INTERNAL;
-  }
+  });
 }
 
 } // extern "C"

@@ -35,6 +35,43 @@ struct Cursor {
   }
 };
 
+void consume_digits(Cursor& c) noexcept {
+  while (!c.eof() && is_digit(c.peek())) {
+    c.advance();
+  }
+}
+
+[[nodiscard]] bool scan_escape(Cursor& c) noexcept {
+  c.advance();
+  if (c.eof()) {
+    return false;
+  }
+
+  const char esc = c.peek();
+  c.advance();
+  switch (esc) {
+    case '"':
+    case '\\':
+    case '/':
+    case 'b':
+    case 'f':
+    case 'n':
+    case 'r':
+    case 't':
+      return true;
+    case 'u':
+      for (int i = 0; i < 4; ++i) {
+        if (c.eof() || !is_hex_digit(c.peek())) {
+          return false;
+        }
+        c.advance();
+      }
+      return true;
+    default:
+      return false;
+  }
+}
+
 [[nodiscard]] bool scan_string(
     Cursor& c,
     std::string_view& out,
@@ -56,32 +93,8 @@ struct Cursor {
     }
     if (byte == '\\') {
       has_escapes = true;
-      c.advance();
-      if (c.eof()) {
+      if (!scan_escape(c)) {
         return false;
-      }
-      const char esc = c.peek();
-      c.advance();
-      switch (esc) {
-        case '"':
-        case '\\':
-        case '/':
-        case 'b':
-        case 'f':
-        case 'n':
-        case 'r':
-        case 't':
-          break;
-        case 'u':
-          for (int i = 0; i < 4; ++i) {
-            if (c.eof() || !is_hex_digit(c.peek())) {
-              return false;
-            }
-            c.advance();
-          }
-          break;
-        default:
-          return false;
       }
       continue;
     }
@@ -108,9 +121,7 @@ struct Cursor {
     c.advance();
   } else if (c.peek() >= '1' && c.peek() <= '9') {
     c.advance();
-    while (!c.eof() && is_digit(c.peek())) {
-      c.advance();
-    }
+    consume_digits(c);
   } else {
     return false;
   }
@@ -120,9 +131,7 @@ struct Cursor {
     if (c.eof() || !is_digit(c.peek())) {
       return false;
     }
-    while (!c.eof() && is_digit(c.peek())) {
-      c.advance();
-    }
+    consume_digits(c);
   }
 
   if (!c.eof() && (c.peek() == 'e' || c.peek() == 'E')) {
@@ -133,9 +142,7 @@ struct Cursor {
     if (c.eof() || !is_digit(c.peek())) {
       return false;
     }
-    while (!c.eof() && is_digit(c.peek())) {
-      c.advance();
-    }
+    consume_digits(c);
   }
 
   out = c.src.substr(start, c.pos - start);
@@ -177,6 +184,38 @@ struct ContainerFrame {
   FrameExpect expect = FrameExpect::FirstElemOrClose;
 };
 
+[[nodiscard]] bool push_container_frame(
+    Cursor& c,
+    std::array<ContainerFrame, kMaxNestingDepth>& stack,
+    std::size_t& depth) noexcept {
+  if (depth >= kMaxNestingDepth) {
+    return false;
+  }
+  const bool is_object = (c.peek() == '{');
+  c.advance();
+  stack[depth++] = ContainerFrame{
+      .is_object = is_object,
+      .expect = is_object ? FrameExpect::FirstKeyOrClose : FrameExpect::FirstElemOrClose,
+  };
+  return true;
+}
+
+[[nodiscard]] bool skip_scalar_token(Cursor& c) noexcept {
+  std::string_view dummy{};
+  bool dummy_escapes = false;
+  const char ch = c.peek();
+  if (ch == '"') {
+    return scan_string(c, dummy, dummy_escapes);
+  }
+  if (ch == '-' || is_digit(ch)) {
+    return scan_number(c, dummy);
+  }
+  if (ch == 't' || ch == 'f' || ch == 'n') {
+    return scan_literal(c, dummy);
+  }
+  return false;
+}
+
 [[nodiscard]] bool skip_nested_container(Cursor& c) noexcept {
   if (c.eof() || (c.peek() != '{' && c.peek() != '[')) {
     return false;
@@ -184,13 +223,9 @@ struct ContainerFrame {
 
   std::array<ContainerFrame, kMaxNestingDepth> stack{};
   std::size_t depth = 0;
-
-  const bool root_is_obj = (c.peek() == '{');
-  c.advance();
-  stack[depth++] = ContainerFrame{
-      .is_object = root_is_obj,
-      .expect = root_is_obj ? FrameExpect::FirstKeyOrClose : FrameExpect::FirstElemOrClose,
-  };
+  if (!push_container_frame(c, stack, depth)) {
+    return false;
+  }
 
   while (depth > 0) {
     c.skip_ws();
@@ -237,29 +272,12 @@ struct ContainerFrame {
         frame.expect = FrameExpect::CommaOrClose;
         const char ch = c.peek();
         if (ch == '{' || ch == '[') {
-          if (depth >= kMaxNestingDepth) {
+          if (!push_container_frame(c, stack, depth)) {
             return false;
           }
-          const bool child_is_obj = (ch == '{');
-          c.advance();
-          stack[depth++] = ContainerFrame{
-              .is_object = child_is_obj,
-              .expect = child_is_obj ? FrameExpect::FirstKeyOrClose
-                                     : FrameExpect::FirstElemOrClose,
-          };
-        } else if (ch == '"') {
-          if (!scan_string(c, dummy, dummy_escapes)) {
-            return false;
-          }
-        } else if (ch == '-' || is_digit(ch)) {
-          if (!scan_number(c, dummy)) {
-            return false;
-          }
-        } else if (ch == 't' || ch == 'f' || ch == 'n') {
-          if (!scan_literal(c, dummy)) {
-            return false;
-          }
-        } else {
+          break;
+        }
+        if (!skip_scalar_token(c)) {
           return false;
         }
         break;
@@ -270,13 +288,14 @@ struct ContainerFrame {
         if (c.peek() == ',') {
           c.advance();
           frame.expect = frame.is_object ? FrameExpect::Key : FrameExpect::Elem;
-        } else if (c.peek() == close_ch) {
+          break;
+        }
+        if (c.peek() == close_ch) {
           c.advance();
           --depth;
-        } else {
-          return false;
+          break;
         }
-        break;
+        return false;
       }
     }
   }
@@ -306,6 +325,45 @@ void assign_scalar_field(
   }
 }
 
+[[nodiscard]] bool parse_top_level_value(
+    Cursor& c,
+    ExtractedFields& result,
+    const JsonlExtractOptions& options,
+    std::string_view key,
+    bool key_escapes) noexcept {
+  const char ch = c.peek();
+  if (ch == '{' || ch == '[') {
+    return skip_nested_container(c);
+  }
+  if (ch == '"') {
+    std::string_view val{};
+    bool val_escapes = false;
+    if (!scan_string(c, val, val_escapes)) {
+      return false;
+    }
+    assign_scalar_field(result, options, key, key_escapes, val, val_escapes);
+    return true;
+  }
+  if (ch == '-' || is_digit(ch)) {
+    std::string_view val{};
+    if (!scan_number(c, val)) {
+      return false;
+    }
+    assign_scalar_field(result, options, key, key_escapes, val, false);
+    return true;
+  }
+  if (ch == 't' || ch == 'f' || ch == 'n') {
+    std::string_view val{};
+    if (!scan_literal(c, val)) {
+      return false;
+    }
+    const auto scalar = (val == "null") ? std::nullopt : std::optional<std::string_view>(val);
+    assign_scalar_field(result, options, key, key_escapes, scalar, false);
+    return true;
+  }
+  return false;
+}
+
 } // namespace
 
 ExtractedFields extract_jsonl_fields(
@@ -323,13 +381,10 @@ ExtractedFields extract_jsonl_fields(
   if (c.eof()) {
     return ExtractedFields{.kind = LineKind::Malformed};
   }
-
   if (c.peek() == '}') {
     c.advance();
     c.skip_ws();
-    return ExtractedFields{
-        .kind = c.eof() ? LineKind::JsonObject : LineKind::Malformed,
-    };
+    return ExtractedFields{.kind = c.eof() ? LineKind::JsonObject : LineKind::Malformed};
   }
 
   ExtractedFields result{};
@@ -350,39 +405,7 @@ ExtractedFields extract_jsonl_fields(
     c.advance();
 
     c.skip_ws();
-    if (c.eof()) {
-      return ExtractedFields{.kind = LineKind::Malformed};
-    }
-
-    const char ch = c.peek();
-    if (ch == '{' || ch == '[') {
-      if (!skip_nested_container(c)) {
-        return ExtractedFields{.kind = LineKind::Malformed};
-      }
-    } else if (ch == '"') {
-      std::string_view val{};
-      bool val_escapes = false;
-      if (!scan_string(c, val, val_escapes)) {
-        return ExtractedFields{.kind = LineKind::Malformed};
-      }
-      assign_scalar_field(result, options, key, key_escapes, val, val_escapes);
-    } else if (ch == '-' || is_digit(ch)) {
-      std::string_view val{};
-      if (!scan_number(c, val)) {
-        return ExtractedFields{.kind = LineKind::Malformed};
-      }
-      assign_scalar_field(result, options, key, key_escapes, val, false);
-    } else if (ch == 't' || ch == 'f' || ch == 'n') {
-      std::string_view val{};
-      if (!scan_literal(c, val)) {
-        return ExtractedFields{.kind = LineKind::Malformed};
-      }
-      if (val == "null") {
-        assign_scalar_field(result, options, key, key_escapes, std::nullopt, false);
-      } else {
-        assign_scalar_field(result, options, key, key_escapes, val, false);
-      }
-    } else {
+    if (c.eof() || !parse_top_level_value(c, result, options, key, key_escapes)) {
       return ExtractedFields{.kind = LineKind::Malformed};
     }
 
@@ -397,10 +420,7 @@ ExtractedFields extract_jsonl_fields(
     if (c.peek() == '}') {
       c.advance();
       c.skip_ws();
-      if (!c.eof()) {
-        return ExtractedFields{.kind = LineKind::Malformed};
-      }
-      return result;
+      return c.eof() ? result : ExtractedFields{.kind = LineKind::Malformed};
     }
     return ExtractedFields{.kind = LineKind::Malformed};
   }
