@@ -5,8 +5,8 @@
 
 ## Current Status
 
-- **Active Phase:** Completed (`v1.0.0`)
-- **Next Step:** None (`v1.0.0` released)
+- **Active Phase:** Phase 3 — IDE Diagnostics & SOLID Refactoring (Planned)
+- **Next Step:** `Step 3.1 — IDE Compilation Database Configuration (.clangd & VS Code)` (awaiting approval)
 - **Last Completed Step:** `Step 2.5 — Instruments Profiling, Polish & v1.0.0`
 - **GitHub Remote:** `https://github.com/GorkemSay/logloom`
 
@@ -31,6 +31,13 @@
 - [x] **Step 2.3** — Interactive Trace Isolation & Live Search
 - [x] **Step 2.4** — Line Inspector, Keyboard Navigation & Export
 - [x] **Step 2.5** — Instruments Profiling, Polish & `v1.0.0`
+
+### Phase 3 — IDE Diagnostics & SOLID Refactoring
+- [ ] **Step 3.1** — IDE Compilation Database Configuration (`.clangd` & `.vscode`) to eliminate 193 false-positive Problems
+- [ ] **Step 3.2** — Modularize `cli/main.cpp` (SRP command modules & declarative option parser)
+- [ ] **Step 3.3** — Flatten `core/c_api.cpp` & `core/jsonl_extractor.cpp` (exception boundary helper & shallow JSON helpers)
+- [ ] **Step 3.4** — Deduplicate Parallel Search Engine (`core/search_engine.cpp` & `core/mmap_reader.cpp` shared pipeline)
+- [ ] **Step 3.5** — Refactor `macos/` Swift Layer (`CStringArena`, split `AppModel` controllers, modular SwiftUI views)
 
 ---
 
@@ -269,6 +276,20 @@
   - `./macos/scripts/profile_app.sh` on `1 GiB` (`1,073,741,882` B, `5,502,862` lines): `Time Profiler` `222` samples / `0` potential hangs; `Animation Hitches` `2` cold-launch hitches; Peak RSS `96.45 MiB` (`98,768 KiB`).
 - **Next:** None — Phase 1 & Phase 2 complete (`v1.0.0`).
 - **Spec Drift / Follow-ups:** Generating `docs/demo.gif` requires interactive macOS Screen Recording permission; helper script `macos/scripts/record_demo.sh` is provided so the user can record a local demo clip directly.
+
+### 2026-11-27 — Phase 3 Audit: IDE Problems Root Cause & SOLID Refactoring Plan
+- **Files Touched:** `PROGRESS.md` (analysis & planning only; no code modified).
+- **Root Cause of 193 IDE Problems:**
+  - All C++ targets already compile cleanly with `-Wall -Wextra -Wpedantic -Werror` and pass `32/32` Catch2/C-ABI tests in both `debug-asan` and `release` presets.
+  - Although `build/debug-asan/compile_commands.json` exists, there is no `.clangd` or `.vscode/c_cpp_properties.json` pointing the IDE language server to the CMake compile database. Consequently, the IDE parses C++20 source files with default C++14 flags and without `-I include` or `-DLOGLOOM_VERSION_STRING="1.0.0"`, causing cascading false-positive errors (e.g., 3 errors even in the 9-line `core/version.cpp`, totaling 193 Problems across 10 C/C++ files).
+- **Nesting & SOLID Audit Findings (Measured Metrics):**
+  - `cli/main.cpp` (`654` lines, `98` `if/else`, max indent `31`): Monolith violating SRP by mixing ANSI styling helpers, manual `if/else if` argv loops, 4 command handlers (`trace`, `search`, `context`, `stats`), context hunk merging, and JSONL file export in one translation unit.
+  - `core/c_api.cpp` (`699` lines, `72` `if/else`, max indent `48`): Repeated `try/catch` boilerplate across C API functions and deep null-pointer / query conversion nesting.
+  - `core/jsonl_extractor.cpp` (`409` lines, `57` `if/else`, max indent `37`): Deep container/escape branching inside the top-level JSON scanner loop.
+  - `core/search_engine.cpp` (`446` lines, `47` `if/else`) & `core/mmap_reader.cpp` (`497` lines, `40` `if/else`): Duplicated parallel newline-partition scheduling, cooperative cancellation, limit enforcement, and ordered batch merging (DRY & OCP/DIP).
+  - `macos/Sources/LogloomCore/LogFile.swift` (`322` lines, max indent `44`): 6-level nested `withOptionalCString` / `withCString` closure pyramid inside `search(...)`.
+  - `macos/Sources/LogloomApp/AppModel.swift` (`566` lines) & `ContentView.swift` (`487` lines): Combined file lifecycle, background indexing, live search debounce/streaming, inspector/context, and export state inside a single `AppModel` alongside monolithic view layout.
+- **Planned Steps:** `Step 3.1` through `Step 3.5` (no source files modified; awaiting user approval before starting implementation).
 
 <!--
 Entry template for subsequent steps:
